@@ -1,0 +1,11 @@
+{
+  "session_id": "aaaaaaaa-0000-4000-8000-000000000302",
+  "start_time": "2026-10-22T20:13:20.000Z",
+  "end_time": "2026-10-22T20:14:20.000Z",
+  "environment": {
+    "working_directory": "/home/fixture/projects/original"
+  },
+  "config": {
+    "active_model": "mistral-medium-3"
+  }
+}

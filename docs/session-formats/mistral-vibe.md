@@ -22,9 +22,9 @@ or `session_logging.save_dir` in `config.toml`), so unified sessions live under
 the legacy format that the rest of this document describes.
 
 Upstream store identity: `mistral.vibe.unified-session-store/v1` with a
-`store_format_minor` revision counter (9 as of v3.0.2). Readers accept lower
-minor versions and **reject higher ones**, so a minor bump is a hard
-compatibility boundary and a ready-made drift signal for watch passes.
+`store_format_minor` revision counter. **Sessions Chronicle accepts minor 9
+only**; its fixture-backed range is stores written by Vibe 3.0.0, 3.0.1 and
+3.0.2 (all minor 9). Other minor versions are rejected, including lower ones.
 
 ---
 
@@ -172,7 +172,99 @@ resolved via manifest chunk references, not inline records only.
   transcripts; 5: checkpoint capability baselines; 6: self-describing
   reservations and abandoned receipts; 7: checkpoint configuration baselines
   and recorded transition shapes; 8: pruned request/result bodies on settled
-  actions; 9: pooled chunks
+  actions and pooled capability catalogs; 9: atomic session relocation and
+  system-instruction baselines
+
+### Sessions Chronicle Unified Reader
+
+The read-only reader in `crates/core/src/parsers/mistral_vibe_unified/` follows
+the `CURRENT` pointer to its manifest, validates and loads the projection and
+referenced history chunks, then streams and replays the journal suffix. It
+checks canonical pointer/manifest bytes, digests, sequence/hash chaining, and
+projection operations; a stability check guards the read against publication
+while Vibe is writing. The reader does not acquire Vibe leases or locks and
+never writes to the source store.
+
+An unstable read is retried on a later indexing pass: the first pass of a
+consecutive unstable sequence is deferred quietly, and an indexing diagnostic
+is reported from the second consecutive unstable pass onward. Only strictly
+consecutive unstable outcomes accumulate. Any other observed outcome for the
+session path — a successful index, a current-signature skip, a same-ID
+collision, a corruption/unsupported/missing-`CURRENT` diagnostic, or a
+confirmed deletion — breaks the sequence, so the next unstable pass is deferred
+again as a new first occurrence. These transient counters live in an explicit
+in-memory indexing context tied to one database (retained by the indexing
+worker across indexer recreations, cleared only by a committed full clear, and
+reset by an application restart); they are never persisted and never shared
+across independently created indexer contexts.
+
+The byte-level integrity rules are pinned in plan facts **C** and **E**. For
+the projection/runtime documents and pooled chunk documents, the reader hashes
+the raw stored bytes after removing exactly one required final LF; it does not
+re-serialize or re-canonicalize those document bodies. `CURRENT` and the
+manifest, in contrast, are checked for canonical JSON encoding (and the
+manifest digest is checked against its canonical body).
+
+Each journal record must be a canonical JSON record terminated by LF. To
+calculate `record_sha256`, omit the entire last
+`,"record_sha256":"<64-hex-digest>"` field—including its leading comma, key,
+digest value and closing quote—from the record bytes, then SHA-256 the remaining
+bytes. The omitted value must be 64 hexadecimal characters and match the
+record's `record_sha256`. The reader also validates consecutive sequence
+numbers and `previous_record_sha256` chaining. A final journal fragment without
+LF is ignored, not parsed or replayed.
+
+The implementation follows pinned upstream facts **E–K** in
+`docs/superpowers/plans/2026-10-23-mistral-vibe-unified.md`: E, journal record
+validation and chaining; F, projection replay operations and watermarks; G,
+snapshot envelope; H, entry shapes; I, skill invocation display; J,
+deterministic child identity; K, offloaded large tool-result resolution.
+`checkpoint.json` is not read. Neither are `scheduled-loops.json`, the sibling
+`.session-index.json` catalog, or `scratchpad/`.
+
+Only first-level Unified subagent sessions are supported. A verified child whose
+parent is itself a known Unified subagent is rejected, regardless of discovery
+order; an already indexed orphan is removed (including contents, signature and
+incoming links) when its parent is later revealed to be a subagent. An absent
+parent cannot establish invalid ancestry: the orphan must remain indexable until
+that evidence exists. Ancestry/cleanup is scoped to verified candidates and
+owned Unified rows in the same source root; legacy nested-child behavior is
+unchanged. Unknown minor-9 state variants (including `pending` effect states)
+are unsupported rather than presented as successful activity.
+
+#### Reader Semantic Version and Incremental Invalidation
+
+`UNIFIED_READER_VERSION` in
+`crates/core/src/parsers/mistral_vibe_unified/signature.rs` is a monotonically
+increasing revision of **Sessions Chronicle's reader semantics**, not a Vibe
+storage revision or an application release number. Its value is stored in
+`UnifiedSignature.reader_version` in the `vibe_unified_signatures` table.
+
+Increment it when a parsing, journal-replay, conversion, validation, or
+freshness change requires **already indexed stores to be reprocessed even when
+their source files have not changed**. For example, corrected transcript
+mapping or stricter validation of previously accepted content must not leave
+an old successful signature silently skipping the affected store. Do not bump
+it for behavior-preserving refactors, optimizations, documentation, or test-only
+changes. Add or update a regression proving that an old reader-version
+signature is no longer current. Version **2** invalidates signatures predating
+the journal-digest, state-union, and identity-validation fixes.
+
+A stored version unequal to the current constant makes `is_current()` return
+`false`. The next incremental pass retries those Unified stores through the
+normal reader; no global database clear is required and other AI assistants
+are not forced to reindex. Successful publication atomically updates session
+contents and the signature while preserving favorites. A failed or deferred
+read keeps the previous indexed snapshot and signature, so a later pass can
+retry. Source stores remain read-only.
+
+Keep these version domains separate:
+
+| Version | Purpose |
+|---|---|
+| Vibe `store_format` / `store_format_minor` (currently minor 9 only) | Which upstream on-disk format the reader accepts. |
+| `UNIFIED_READER_VERSION` (currently 2) | Whether a prior successful Unified read may still be skipped. |
+| SQLite schema version | Structure of Sessions Chronicle's index database; changing reader semantics alone does not require a schema migration. |
 
 ---
 

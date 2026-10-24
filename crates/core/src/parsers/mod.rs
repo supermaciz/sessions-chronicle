@@ -2,6 +2,7 @@ pub mod claude_code;
 pub mod codex;
 pub mod kimi_code;
 pub mod mistral_vibe;
+pub mod mistral_vibe_unified;
 pub mod model;
 pub mod opencode;
 

@@ -27,7 +27,7 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - Date filter pill in the session list (Today / Yesterday / custom range) alongside assistant and project filters
 - Streamlined sidebar split into two unlabeled filter blocks (assistants + pins, projects)
 - Session summary moved into a header-bar popover (`speaker-notes` button) instead of an inline header block
-- Subagent support for Mistral Vibe (child sessions indexed from `<session>/agents/`) and refreshed Codex subagent parsing (`collab_resume_end` + response-item subagents)
+- Mistral Vibe legacy sessions plus read-only Unified store support (Vibe 3.0.0–3.0.2, store minor 9), including child-session navigation; refreshed Codex subagent parsing (`collab_resume_end` + response-item subagents)
 - Expanded tool call classification: Plan, Skill, and UserInput categories plus snake_case and assistant-specific tool name variants
 - Current Kimi Code sessions are indexed from `$KIMI_CODE_HOME` (default `~/.kimi-code`) when visible in the Flatpak sandbox; legacy `~/.kimi` sessions are not parsed
 - Session list sorting via a dedicated sort pill (recent activity, oldest/newest first, most messages)
@@ -58,6 +58,7 @@ Sessions Chronicle is a GNOME desktop app that indexes local AI coding assistant
 - GNOME Shell search provider: sessions searchable from GNOME Activities via a standalone D-Bus service in `crates/search-provider/` (#201)
 - Codex paginated history indexing and task-name subagents (#208)
 - OpenCode V2 support: SQLite session store indexed with lazy, typed transcript context entries (#210)
+- Mistral Vibe Unified reader: pointer/manifest/projection/chunk loading and journal replay for minor 9 stores; legacy Vibe indexing remains supported
 
 ### Since `v0.4.8` (`v0.5.0` → `v0.7.1`)
 

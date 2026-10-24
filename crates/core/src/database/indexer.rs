@@ -2,12 +2,14 @@ mod kimi;
 mod opencode;
 #[cfg(test)]
 mod opencode_tests;
+mod vibe_unified;
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
-use std::collections::{HashSet, VecDeque};
+use rusqlite::{Connection, OptionalExtension};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
 use crate::models::{AiAssistant, IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
@@ -19,6 +21,69 @@ use crate::session_sources::SessionSources;
 
 pub struct SessionIndexer {
     db: Connection,
+    runtime_state: IndexingRuntimeState,
+}
+
+/// Transient, in-memory indexing context shared by every [`SessionIndexer`]
+/// built from the same state clone.
+///
+/// It carries per-source-path retry bookkeeping — currently the consecutive
+/// unstable-deferral counters of the Unified Mistral Vibe reader — that must
+/// survive the per-request indexer recreation a production worker performs.
+/// `Default` creates a fresh, independent context; `Clone` shares the
+/// interior storage with the original, so one worker can retain a single
+/// state for its fixed database path and hand clones to fresh indexers.
+/// Two independently created states never share data: there is no process
+/// global, and nothing is persisted.
+///
+/// The state is meaningful for one fixed database. Handing the same (cloned)
+/// state to indexers of a different database is an explicit caller decision,
+/// never an implicit leak.
+#[derive(Debug, Default, Clone)]
+pub struct IndexingRuntimeState {
+    unified_deferrals: Arc<Mutex<HashMap<PathBuf, u32>>>,
+}
+
+impl IndexingRuntimeState {
+    /// Current consecutive unstable-deferral count of `path` in this context.
+    #[cfg(test)]
+    pub(crate) fn unified_deferral_count(&self, path: &Path) -> u32 {
+        self.unified_deferrals
+            .lock()
+            .unwrap()
+            .get(path)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Records another consecutive unstable outcome for `path` and returns
+    /// the updated consecutive count.
+    pub(crate) fn note_unified_deferral(&self, path: &Path) -> u32 {
+        let mut deferrals = self.unified_deferrals.lock().unwrap();
+        let count = deferrals.entry(path.to_path_buf()).or_default();
+        *count += 1;
+        *count
+    }
+
+    /// Breaks `path`'s consecutive unstable sequence: the next unstable
+    /// outcome for the path starts a fresh first occurrence.
+    pub(crate) fn break_unified_sequence(&self, path: &Path) {
+        self.unified_deferrals.lock().unwrap().remove(path);
+    }
+
+    /// Breaks the sequences of every removed path after a confirmed removal.
+    pub(crate) fn note_unified_removals(&self, paths: &[PathBuf]) {
+        let mut deferrals = self.unified_deferrals.lock().unwrap();
+        for path in paths {
+            deferrals.remove(path);
+        }
+    }
+
+    /// Clears every deferral counter in this context, after the database
+    /// content they describe has been cleared by a committed transaction.
+    pub(crate) fn clear_unified_deferrals(&self) {
+        self.unified_deferrals.lock().unwrap().clear();
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -354,13 +419,25 @@ fn link_codex_task_child_tx(
 }
 
 impl SessionIndexer {
+    /// Creates an indexer with a fresh, independent runtime context.
+    ///
+    /// Existing callers that index a database in one go keep this default;
+    /// a worker that recreates an indexer per request must retain one
+    /// [`IndexingRuntimeState`] and pass clones to [`SessionIndexer::new_with_state`]
+    /// instead, so transient retry state survives indexer recreation.
     pub fn new(db_path: &Path) -> Result<Self> {
+        Self::new_with_state(db_path, IndexingRuntimeState::default())
+    }
+
+    /// Creates an indexer whose transient retry state is shared with every
+    /// other indexer built from clones of `runtime_state`.
+    pub fn new_with_state(db_path: &Path, runtime_state: IndexingRuntimeState) -> Result<Self> {
         let db = crate::database::open_connection(db_path)?;
         db.pragma_update(None, "journal_mode", "WAL")
             .context("Failed to enable WAL mode")?;
         crate::database::schema::initialize_database(&db)
             .context("Failed to initialize database schema")?;
-        Ok(Self { db })
+        Ok(Self { db, runtime_state })
     }
 
     #[allow(dead_code)]
@@ -499,6 +576,7 @@ impl SessionIndexer {
             )?;
         }
 
+        self.index_vibe_unified_sessions(sessions_dir, incremental, &mut stats, errors_detail)?;
         self.prune_orphan_fingerprints()?;
         Ok(stats)
     }
@@ -613,7 +691,7 @@ impl SessionIndexer {
             return Ok(false);
         };
 
-        let known = self.indexed_paths_under(agents_str)?;
+        let known = self.indexed_paths_under(agents_str, None)?;
 
         let mut removed_direct_child = false;
         for file_path in known {
@@ -642,7 +720,7 @@ impl SessionIndexer {
         let Some(dir_str) = dir.to_str() else {
             return Ok(removed);
         };
-        for file_path in self.indexed_paths_under(dir_str)? {
+        for file_path in self.indexed_paths_under(dir_str, None)? {
             removed += self.remove_session_for_file(Path::new(&file_path))?;
         }
 
@@ -653,18 +731,37 @@ impl SessionIndexer {
     /// starting with `<dir>/`. Uses a half-open prefix range so the
     /// `idx_sessions_file_path` index serves it without scanning the table, and
     /// so the common leaf case (no descendants) returns immediately.
-    fn indexed_paths_under(&self, dir: &str) -> Result<Vec<String>> {
+    /// `assistant` optionally restricts the range to one tool's sessions;
+    /// the range bounds themselves are byte comparisons under the
+    /// column's default BINARY collation, so `%` and `_` in `dir` are
+    /// literal bytes, never LIKE wildcards.
+    fn indexed_paths_under(
+        &self,
+        dir: &str,
+        assistant: Option<&AiAssistant>,
+    ) -> Result<Vec<String>> {
         // `/` is byte 0x2F, so the next possible byte 0x30 (`0`) bounds every
         // path beginning with `<dir>/` from above. Comparison uses the column's
         // default BINARY collation, so the match is exact and case-sensitive.
         let lower = format!("{dir}/");
         let upper = format!("{dir}0");
-        let mut stmt = self
-            .db
-            .prepare("SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2")?;
-        let rows = stmt
-            .query_map([lower, upper], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut stmt = self.db.prepare(match assistant {
+            Some(_) => {
+                "SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2 AND tool=?3"
+            }
+            None => "SELECT file_path FROM sessions WHERE file_path >= ?1 AND file_path < ?2",
+        })?;
+        let rows = match assistant {
+            Some(assistant) => stmt
+                .query_map(
+                    rusqlite::params![lower, upper, assistant.to_storage()],
+                    |row| row.get(0),
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            None => stmt
+                .query_map(rusqlite::params![lower, upper], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+        };
         Ok(rows)
     }
 
@@ -678,6 +775,30 @@ impl SessionIndexer {
     ) -> Result<()> {
         match parser.parse(path) {
             Ok(parsed) => {
+                let existing: Option<String> = self
+                    .db
+                    .query_row(
+                        "SELECT file_path FROM sessions WHERE id=?1",
+                        [&parsed.session.id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if let Some(existing) = existing
+                    && existing != path.to_string_lossy()
+                    && Path::new(&existing).exists()
+                {
+                    push_indexing_error(
+                        errors_detail,
+                        AiAssistant::MistralVibe,
+                        Some(path.display().to_string()),
+                        format!(
+                            "Mistral Vibe session id {} is already indexed from {}",
+                            parsed.session.id, existing
+                        ),
+                    );
+                    stats.errors += 1;
+                    return Ok(());
+                }
                 self.insert_parsed_session_with_fingerprint(&parsed, path, fingerprint_target)?;
                 stats.indexed += 1;
             }
@@ -1181,7 +1302,13 @@ impl SessionIndexer {
         let session = &parsed.session;
         let (edit_count, read_count, command_count) =
             Self::compute_activity_counts(&parsed.tool_calls);
-        let ending_status = Self::determine_ending_status(&parsed.tool_calls).to_storage();
+        let ending_status =
+            (if session.ending_status != crate::models::SessionEndingStatus::Unknown {
+                session.ending_status.clone()
+            } else {
+                Self::determine_ending_status(&parsed.tool_calls)
+            })
+            .to_storage();
 
         tx.execute(
             SESSION_UPSERT_SQL,
@@ -1490,10 +1617,15 @@ impl SessionIndexer {
         tx.execute("DELETE FROM messages", [])?;
         tx.execute("DELETE FROM sessions", [])?;
         tx.execute("DELETE FROM file_fingerprints", [])?;
+        tx.execute("DELETE FROM vibe_unified_signatures", [])?;
         tx.execute("DELETE FROM opencode_session_sources", [])?;
         tx.execute("DELETE FROM opencode_source_fingerprints", [])?;
         tx.execute("DELETE FROM opencode_source_sessions", [])?;
         tx.commit()?;
+        // The transient retry context describes the cleared database rows,
+        // so only a committed clear may reset it; a failed transaction
+        // leaves this context — and every other context — untouched.
+        self.runtime_state.clear_unified_deferrals();
         Ok(())
     }
 
@@ -3383,7 +3515,7 @@ mod tests {
         let sessions_dir = crate::fixture_path("vibe_sessions");
 
         let count = indexer.index_vibe_sessions(&sessions_dir).unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 10);
 
         let sessions: Vec<(String, String)> = indexer
             .db
@@ -3394,7 +3526,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions.len(), 10);
         assert!(sessions.iter().all(|(_, tool)| tool == "mistral_vibe"));
     }
 
@@ -3789,6 +3921,49 @@ mod tests {
             .unwrap();
 
         assert_eq!(ending, "abrupt");
+    }
+
+    #[test]
+    fn explicit_parser_ending_status_wins_over_last_tool_call() {
+        use crate::models::{SessionEndingStatus, ToolCallStatus};
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        let fingerprint = NamedTempFile::new().unwrap();
+        let mut parsed = crate::parsers::mistral_vibe_unified::MistralVibeUnifiedParser::parse(
+            &crate::parsers::mistral_vibe_unified::MistralVibeUnifiedParser,
+            &crate::fixture_path("vibe_sessions/unified/aaaaaaaa-0000-4000-8000-000000000302"),
+        )
+        .unwrap()
+        .parsed;
+        for status in [
+            SessionEndingStatus::Clean,
+            SessionEndingStatus::Error,
+            SessionEndingStatus::Abrupt,
+        ] {
+            parsed.session.ending_status = status.clone();
+            parsed.tool_calls.last_mut().unwrap().status = if status == SessionEndingStatus::Abrupt
+            {
+                ToolCallStatus::Completed
+            } else {
+                ToolCallStatus::Pending
+            };
+            indexer
+                .insert_parsed_session_with_fingerprint(
+                    &parsed,
+                    fingerprint.path(),
+                    fingerprint.path(),
+                )
+                .unwrap();
+            let actual: String = indexer
+                .db
+                .query_row(
+                    "SELECT ending_status FROM sessions WHERE id=?1",
+                    [&parsed.session.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(actual, status.to_storage());
+        }
     }
 
     #[test]

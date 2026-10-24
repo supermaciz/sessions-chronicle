@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 20;
+const CURRENT_DB_VERSION: i64 = 21;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -69,6 +69,7 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        SQLite source exposed at its last committed fingerprint, so an
 ///        unchanged source is no longer opened on incremental runs, with
 ///        per-representation proven ineligibility and retry state
+///   21 – vibe_unified_signatures stores Unified Mistral Vibe freshness inputs
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -131,6 +132,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 20 {
         apply_v20_migration(conn)?;
+    }
+    if version < 21 {
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS vibe_unified_signatures (session_dir TEXT PRIMARY KEY, signature TEXT NOT NULL); PRAGMA user_version = 21;")?;
     }
 
     Ok(())
@@ -842,6 +846,66 @@ fn apply_v20_migration(conn: &Connection) -> Result<()> {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn migration_v21_creates_vibe_unified_signatures() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch("DROP TABLE vibe_unified_signatures; PRAGMA user_version=20; INSERT INTO file_fingerprints(file_path, size, mtime_ns) VALUES ('preserved', 1, 2);").unwrap();
+        conn.execute_batch("INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, pinned_at) VALUES ('preserved', 'mistral_vibe', 1, 1, 'legacy/session', 2, 1234); INSERT INTO messages(session_id, message_index, role, content, timestamp) VALUES ('preserved', 0, 'user', 'preserved prompt', 1);").unwrap();
+        initialize_database(&conn).unwrap();
+        assert_eq!(CURRENT_DB_VERSION, 21);
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            21
+        );
+        assert!(table_exists(&conn, "vibe_unified_signatures"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT pinned_at FROM sessions WHERE id='preserved'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1234
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT content FROM messages WHERE session_id='preserved'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "preserved prompt"
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM file_fingerprints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        conn.execute(
+            "INSERT INTO vibe_unified_signatures VALUES ('session', 'signature')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO vibe_unified_signatures VALUES ('session', 'other')",
+                []
+            )
+            .is_err()
+        );
+        initialize_database(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT signature FROM vibe_unified_signatures", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "signature"
+        );
+    }
 
     fn index_exists(conn: &Connection, name: &str) -> bool {
         conn.query_row(

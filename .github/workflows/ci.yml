@@ -79,7 +79,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage report
-        run: dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo llvm-cov --lcov --output-path lcov.info --no-clean
+        run: dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo llvm-cov --workspace --lcov --output-path lcov.info --no-clean
       - name: Upload to Codecov
         uses: codecov/codecov-action@v7
         env:

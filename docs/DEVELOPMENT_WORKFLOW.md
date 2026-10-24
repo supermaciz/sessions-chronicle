@@ -165,7 +165,7 @@ This maps to:
 | Claude Code | `tests/fixtures/claude_sessions/` |
 | OpenCode | `tests/fixtures/opencode_storage/` |
 | Codex | `tests/fixtures/codex_sessions/` |
-| Mistral Vibe | `tests/fixtures/vibe_sessions/` |
+| Mistral Vibe | `tests/fixtures/vibe_sessions/` (legacy and Unified stores) |
 | Kimi Code | `tests/fixtures/kimi_home/` |
 
 OpenCode database resolution in override mode:
@@ -174,6 +174,8 @@ OpenCode database resolution in override mode:
 - Uses JSON storage fallback if no SQLite database is found
 
 If a known subdirectory is missing, the override root itself is used as a fallback for that assistant.
+The Vibe fixture root includes `unified/`; the fixture-backed index therefore
+shows both legacy and Unified Mistral Vibe sessions.
 
 You can also point to a single assistant's directory:
 

@@ -97,40 +97,69 @@ impl ToolCategory {
 pub fn classify_tool_name(name: &str) -> ToolCategory {
     match name {
         // Edits (file-modifying operations)
-        "Edit" | "Write" | "NotebookEdit" | "MultiEdit" | "edit" | "write" | "write_file"
-        | "apply_patch" | "search_replace" => ToolCategory::Edit,
+        "Edit"
+        | "Write"
+        | "NotebookEdit"
+        | "MultiEdit"
+        | "edit"
+        | "write"
+        | "write_file"
+        | "apply_patch"
+        | "search_replace"
+        | "file_system.write_file"
+        | "file_system.search_replace" => ToolCategory::Edit,
 
         // Commands (shell execution)
-        "Bash" | "bash" | "exec_command" | "shell" | "shell_command" | "write_stdin" => {
-            ToolCategory::Command
-        }
+        "Bash" | "bash" | "exec_command" | "shell" | "shell_command" | "write_stdin"
+        | "file_system.bash" => ToolCategory::Command,
 
         // Reads (file content)
-        "Read" | "read" | "read_file" | "list_directory" | "list_files" | "list" => {
-            ToolCategory::Read
-        }
+        "Read"
+        | "read"
+        | "read_file"
+        | "list_directory"
+        | "list_files"
+        | "list"
+        | "file_system.read_file" => ToolCategory::Read,
 
         // Search (codebase exploration)
         "Glob" | "Grep" | "grep" | "glob" | "codesearch" => ToolCategory::Search,
 
         // Agent (subagent spawning)
-        "Agent" | "Task" | "TaskCreate" | "TaskUpdate" => ToolCategory::Agent,
+        "Agent"
+        | "Task"
+        | "TaskCreate"
+        | "TaskUpdate"
+        | "agents.spawn"
+        | "agents.list"
+        | "agents.list_configs"
+        | "agents.send_message"
+        | "agents.interrupt" => ToolCategory::Agent,
 
         // Web (network operations)
-        "WebSearch" | "WebFetch" | "websearch" | "webfetch" | "web_search" | "web_fetch" => {
-            ToolCategory::Web
-        }
+        "WebSearch"
+        | "WebFetch"
+        | "websearch"
+        | "webfetch"
+        | "web_search"
+        | "web_fetch"
+        | "connector_web_search.web_search"
+        | "connector_web_search.open_url" => ToolCategory::Web,
 
         // Plan (task lists / planning)
-        "TodoWrite" | "todowrite" | "todoread" | "todo" | "update_plan" => ToolCategory::Plan,
+        "TodoWrite" | "todowrite" | "todoread" | "todo" | "update_plan" | "vibe.todo" => {
+            ToolCategory::Plan
+        }
 
         // Skill (reusable capability invocation)
-        "Skill" | "skill" => ToolCategory::Skill,
+        "Skill" | "skill" | "skill.read" => ToolCategory::Skill,
 
         // User input (prompts directed at the user)
-        "AskUserQuestion" | "ask_user_question" | "question" | "request_user_input" => {
-            ToolCategory::UserInput
-        }
+        "AskUserQuestion"
+        | "ask_user_question"
+        | "question"
+        | "request_user_input"
+        | "ui.ask_user_question" => ToolCategory::UserInput,
 
         // Everything else
         _ => ToolCategory::Other,
@@ -258,5 +287,65 @@ mod tests {
     fn classify_unknown_tools_as_other() {
         assert_eq!(classify_tool_name("my_tool"), ToolCategory::Other);
         assert_eq!(classify_tool_name(""), ToolCategory::Other);
+    }
+
+    #[test]
+    fn classify_vibe_unified_qualified_tools() {
+        // Mistral Vibe Unified writes qualified tool names (fact H).
+        assert_eq!(
+            classify_tool_name("file_system.write_file"),
+            ToolCategory::Edit
+        );
+        assert_eq!(
+            classify_tool_name("file_system.search_replace"),
+            ToolCategory::Edit
+        );
+        assert_eq!(
+            classify_tool_name("file_system.bash"),
+            ToolCategory::Command
+        );
+        assert_eq!(
+            classify_tool_name("file_system.read_file"),
+            ToolCategory::Read
+        );
+        assert_eq!(classify_tool_name("agents.spawn"), ToolCategory::Agent);
+        assert_eq!(classify_tool_name("agents.list"), ToolCategory::Agent);
+        assert_eq!(
+            classify_tool_name("agents.list_configs"),
+            ToolCategory::Agent
+        );
+        assert_eq!(
+            classify_tool_name("agents.send_message"),
+            ToolCategory::Agent
+        );
+        assert_eq!(classify_tool_name("agents.interrupt"), ToolCategory::Agent);
+        assert_eq!(
+            classify_tool_name("connector_web_search.web_search"),
+            ToolCategory::Web
+        );
+        assert_eq!(
+            classify_tool_name("connector_web_search.open_url"),
+            ToolCategory::Web
+        );
+        assert_eq!(classify_tool_name("vibe.todo"), ToolCategory::Plan);
+        assert_eq!(classify_tool_name("skill.read"), ToolCategory::Skill);
+        assert_eq!(
+            classify_tool_name("ui.ask_user_question"),
+            ToolCategory::UserInput
+        );
+    }
+
+    #[test]
+    fn unknown_connector_suffix_is_not_stripped() {
+        // Only exact qualified names classify: connectors outside the
+        // pinned list stay Other, whatever suffix they carry.
+        assert_eq!(
+            classify_tool_name("connector_acme.bash"),
+            ToolCategory::Other
+        );
+        assert_eq!(
+            classify_tool_name("connector_github_app.search_code"),
+            ToolCategory::Other
+        );
     }
 }

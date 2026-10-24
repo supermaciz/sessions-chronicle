@@ -1,0 +1,159 @@
+//! Reader for Mistral Vibe 3.0.x Unified session stores
+//! (`<vibe-root>/unified/<id>/`, `mistral.vibe.unified-session-store/v1`).
+
+mod canonical;
+mod convert;
+mod effects;
+mod error;
+mod file_stats;
+mod journal;
+pub(crate) mod saved_results;
+pub(crate) mod signature;
+pub(crate) mod store;
+
+use std::fs;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+
+use store::LoadedStore;
+
+pub use convert::{MistralVibeUnifiedParser, UnifiedParse};
+pub use error::UnifiedError;
+pub use saved_results::FileStat;
+pub use signature::{UNIFIED_READER_VERSION, UnifiedSignature};
+pub use store::{FileSample, child_session_id, is_unified_session_dir};
+
+/// Loads one generation, replays its journal segment and hands the
+/// loaded store to `build`, guarding the whole read with a retry-once
+/// stability loop.
+///
+/// After `build` runs, `CURRENT` is re-read and the journal segment is
+/// re-stat'ed: the read is retried once when the pointer bytes changed,
+/// the journal was replaced (different `dev`/`ino`), the segment is
+/// shorter than the sampled size. These checks also guard errors and removal
+/// outcomes: concurrent publication can invalidate even a failed replay. A second
+/// instability is [`UnifiedError::Unstable`]; every other error is
+/// returned as-is.  The returned store keeps the journal sample taken
+/// before the replay, the validated prefix a caller should publish.
+pub(crate) fn load_stable<T>(
+    session_dir: &Path,
+    build: impl Fn(&LoadedStore) -> Result<T, UnifiedError>,
+) -> Result<(T, LoadedStore), UnifiedError> {
+    load_stable_with_replay(session_dir, build, journal::replay_journal)
+}
+
+fn load_stable_with_replay<T>(
+    session_dir: &Path,
+    build: impl Fn(&LoadedStore) -> Result<T, UnifiedError>,
+    replay: impl Fn(&Path, &mut LoadedStore) -> Result<(), UnifiedError>,
+) -> Result<(T, LoadedStore), UnifiedError> {
+    let mut instability: Option<String> = None;
+    for _ in 0..2 {
+        // Baseline the pointer before the attempt so a mid-read failure
+        // can be attributed to a publication in flight.
+        let attempt_current = store::read_current(session_dir);
+        match store::load_generation(session_dir) {
+            Ok(mut store) => {
+                // Keep the pre-replay samples even when replay/build fails.
+                // A stable corrupt record must still fail immediately.
+                let outcome = replay(session_dir, &mut store).and_then(|()| build(&store));
+                if let Err(reason) = read_is_stable(session_dir, &store) {
+                    instability = Some(reason);
+                    continue;
+                }
+                return outcome.map(|value| (value, store));
+            }
+            Err(error) => {
+                let current_now = store::read_current(session_dir);
+                if !same_pointer_read(&current_now, &attempt_current) {
+                    instability = Some("CURRENT changed while loading the generation".to_string());
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+    }
+    Err(UnifiedError::Unstable(instability.unwrap_or_else(|| {
+        "store changed during the read".to_string()
+    })))
+}
+
+/// Re-reads the pointer and the journal metadata, comparing them with
+/// the samples taken while loading: byte-identical `CURRENT`, the same
+/// journal `dev`/`ino`, and a size at or above the sample.
+fn read_is_stable(session_dir: &Path, store: &LoadedStore) -> Result<(), String> {
+    let current = store::read_current(session_dir)
+        .map_err(|_| "CURRENT became unreadable during the read".to_string())?;
+    if current != store.current_bytes {
+        return Err("CURRENT changed during the read".to_string());
+    }
+    let journal_path = session_dir.join(&store.journal.relative_path);
+    let metadata = fs::symlink_metadata(&journal_path).map_err(|_| {
+        format!(
+            "journal segment {} disappeared during the read",
+            store.journal.relative_path
+        )
+    })?;
+    if metadata.dev() != store.journal.dev || metadata.ino() != store.journal.ino {
+        return Err(format!(
+            "journal segment {} was replaced during the read",
+            store.journal.relative_path
+        ));
+    }
+    if metadata.len() < store.journal.size {
+        return Err(format!(
+            "journal segment {} shrank during the read",
+            store.journal.relative_path
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod real_store_test {
+    use super::load_stable;
+
+    #[test]
+    #[ignore = "manual, read-only check against a local Mistral Vibe Unified store"]
+    fn real_unified_root_loads() {
+        let root = std::env::var_os("VIBE_UNIFIED_REAL_ROOT")
+            .expect("set VIBE_UNIFIED_REAL_ROOT to a Unified store root");
+        let root = std::path::PathBuf::from(root);
+        let mut stores = std::fs::read_dir(&root)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", root.display()))
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        stores.sort();
+
+        let mut loaded = 0;
+        for path in stores {
+            if !path.join("CURRENT").is_file() {
+                continue;
+            }
+            let (entries, store) = load_stable(&path, |store| Ok(store.projection.entries.len()))
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            println!("{} entries={entries}", store.runtime.session_id);
+            loaded += 1;
+        }
+        assert!(
+            loaded > 0,
+            "no Unified stores found under {}",
+            root.display()
+        );
+    }
+}
+
+/// Compares two pointer reads: byte-identical bodies, or the same
+/// failure to produce them.
+fn same_pointer_read(
+    current: &Result<Vec<u8>, UnifiedError>,
+    baseline: &Result<Vec<u8>, UnifiedError>,
+) -> bool {
+    match (current, baseline) {
+        (Ok(current), Ok(baseline)) => current == baseline,
+        (Err(_), Err(_)) => true,
+        _ => false,
+    }
+}

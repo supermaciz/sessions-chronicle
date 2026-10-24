@@ -1,9 +1,10 @@
 # Mistral Vibe Unified Session Support
 
 - Date: 2026-10-23
-- Status: Draft — awaiting user review
+- Status: Implemented — PR open; manual release validation pending
 - Scope: Full functional parity with existing Mistral Vibe sessions
-- Revision: Updated after independent Claude Code review
+- Revision: Implementation status and deviations recorded on 2026-10-24
+- Implementation: [PR #211](https://github.com/supermaciz/sessions-chronicle/pull/211), branch `vibe-v3`; code baseline `9bf2b16`
 
 ## Intent and agreed decisions
 
@@ -11,7 +12,49 @@ Users upgrading Mistral Vibe must be able to browse, search, inspect, and resume
 
 The user selected a native Rust reader based on Vibe's persisted public history projection: load its snapshot and referenced chunks, then apply journal updates. Supplement session metadata from the runtime state and `meta.json`. Reuse Sessions Chronicle's domain models and presentation.
 
-The following detailed policies are design proposals made by the author, to be reviewed with this document.
+The following policies define the intended behavior. The implementation status and deviations section records the delivered behavior and outstanding gaps without weakening these requirements.
+
+## Implementation status and deviations
+
+### Delivered implementation and validation
+
+The native Rust reader, journal replay, domain conversion, saved-result resolution, incremental indexer integration, schema v21, child linkage and resume eligibility are implemented in PR #211. Legacy Vibe sessions remain supported alongside Unified stores. The implementation accepts store minor 9 only; it does not add a Python runtime dependency or execute Vibe to read sessions.
+
+The implementation is under review, not merged or declared fully release-validated. On code baseline `9bf2b16`, the recorded verification is:
+
+- `cargo fmt --all -- --check` and `cargo clippy --all -- -D warnings`: passed.
+- Full headless repository suite: **1,724 passed, 0 failed, 1 ignored**. The ignored case is the opt-in local-store reader check, not an unreported test failure.
+- Final-code isolated Flatpak build: passed, including **4/4** packaging metadata checks.
+- Independent whole-field journal-digest audit: **16/16** complete synthetic records; deterministic fixture regeneration and matching Python/Rust replay counts for all seven synthetic stores.
+- Whole-change review followed by a scoped review of the final corrections: all identified Critical/Important findings addressed. The two deferred Minor findings are recorded below.
+
+These results establish the tested code baseline; they do not substitute for the manual release gates below or prove compatibility with untested future storage revisions. See the [implementation plan](../plans/2026-10-23-mistral-vibe-unified.md) and [format reference](../../session-formats/mistral-vibe.md).
+
+### Functional deviations and known limits
+
+| Spec requirement | Implemented behavior / deviation | Impact and follow-up |
+|---|---|---|
+| Failed reads retain the previous indexed snapshot and user-owned state. | Incremental and non-clearing per-source updates preserve prior rows, contents, signatures and favorites on read failure. The existing global `index_all_full_reindex` still calls `clear_all_sessions` before rebuilding; global rebuild atomicity was not changed. | **Preservation scope is narrower than an unconditional reading of this spec.** An explicit global rebuild can lose the previous snapshot and favorites even if a replacement store fails to parse. A transactional global rebuild is separate follow-up work. |
+| Reject deeper subagent nesting and cycles. | Known deeper ancestry is rejected, including either discovery order and cleanup of previously indexed children once their parent is revealed as a subagent. A structurally valid orphan can still index while its parent is absent; the reader cannot infer missing ancestry safely. | A forged orphan can appear temporarily without a navigable parent link. Later verified ancestry triggers rejection/removal. Requiring a readable parent before any child indexing would conflict with child-before-parent support; that stricter policy is not implemented. |
+| Reject traversal and escaping symlinks. | Static session-down symlinks, including `CURRENT`, are rejected; symlinked source ancestors remain supported. Saved results use no-follow metadata validation, then compare the opened handle's device/inode before reading from that handle. This is not an `openat`/`O_NOFOLLOW` path-resolution guarantee. | Ordinary different-inode substitutions are rejected, but a same-inode symlink/hardlink ABA can evade the literal no-symlink policy. This remains nonblocking hardening debt, not a claim that all adversarial filesystem races are closed. |
+| Drop empty reasoning content. | A blank-only summary can remain as `summary_text = Some(...)` and create an otherwise empty reasoning attachment. | Deferred Minor presentation defect; filter blank summary parts before creating an attachment. Readable neighboring content is not lost. |
+| Meaningful end-to-end filter coverage. | Integration tests verify overall Vibe filter counts and R302 membership, while a separate database count verifies indexed Unified roots. They do not individually assert all four Unified roots in the public filter result. | Deferred Minor test gap, not evidence of a known filter failure. Add explicit result-set membership assertions for all expected roots and excluded children. |
+
+The remaining limitations above are explicit implementation gaps or bounded policies, not retroactive changes to the design requirements. The global rebuild behavior predates this reader; it is listed because the preservation wording otherwise overstates the guarantee delivered by this feature.
+
+### Equivalent implementation choices, not functional gaps
+
+- Child availability is not serialized into `UnifiedSignature`. Instead, reciprocal SQL linkage runs when either participant is published, and deletion cleanup clears links. A newly readable child can therefore link to an incrementally skipped parent without forcing a parent transcript reparse.
+- Existing analytics retain their top-level-only semantics for all AI assistants. All seven Unified fixture sessions are indexed, but only their four root/fork sessions contribute to top-level session totals; child tokens are not added to parent totals.
+- Minor 9 rejects `pending` effects and unknown state-bearing variants. The mapping mentioned later for a separately supported schema is conditional; no such schema was added. Unsupported stores are diagnosed rather than partially accepted.
+- The final journal implementation omits the **entire** `record_sha256` field when hashing, as required below and by pinned upstream. A shared reader/generator slicing defect found during implementation review was corrected, the fixtures regenerated, and an independently anchored writer vector added. This is a resolved defect, not an accepted deviation from the spec.
+
+### Outstanding manual release gates
+
+- [ ] Inspect fixture R302 in the running UI and capture screenshots covering message order, reasoning, tool call statuses, full saved output and navigation to CHILD_A/CHILD_B.
+- [ ] Check the target Vibe CLI's `--resume` support and actually reopen a real Unified root from the app; confirm the running UI disables resume for a Unified child. Automated eligibility tests do not validate external CLI behavior.
+
+Neither manual gate has been performed or waived. No live Vibe command or desktop-window inspection was used during implementation. Until these gates are completed, the full functional-parity release condition remains pending.
 
 ## Goals and boundaries
 
@@ -43,7 +86,7 @@ Support stores written by Vibe 3.0.0, 3.0.1, and the pinned 3.0.2 baseline. Insp
 
 Minor 9 is mandatory, with fixtures covering the three release shapes, full projection replacements, and deltas. Lower minors are accepted only when their required structures and semantics are implemented and covered by fixtures; there is no blanket acceptance based solely on a smaller number. Newer minors and unsupported required schema versions produce an explicit diagnostic. Pre-3.0 experimental Unified revisions are outside the mandatory release scope. The release documents the exact fixture-backed revision range.
 
-Correct the local format reference during implementation: upstream comments assign minor 8 to pooled capability catalogs and pruning settled action bodies, and minor 9 to atomic relocation and system-instruction baselines. Its current description of minor 9 as introducing pooled chunks is inaccurate.
+The local format reference has been corrected: upstream comments assign minor 8 to pooled capability catalogs and pruning settled action bodies, and minor 9 to atomic relocation and system-instruction baselines. The earlier description of minor 9 as introducing pooled chunks was inaccurate.
 
 ## Approaches considered
 
@@ -151,7 +194,7 @@ Update session rows, transcript data, FTS, and the successful freshness signatur
 
 If a required file disappears during publication or a generation changes repeatedly while reading, retain the previous database snapshot and retry on a later pass. An incomplete final journal fragment alone is not a failure: publish the valid prefix as specified above, including for sessions left after a crash. A malformed complete record or hash/sequence failure is an explicit corruption diagnostic; do not skip it and publish a misleading suffix. Unaffected sessions continue indexing.
 
-Integrate unsupported-format/corruption diagnostics with existing indexing status surfaces. There is no existing cross-pass retry accounting to rely on: add a small in-memory per-source-path deferral counter for publication races. After the single immediate retry, defer the first failed pass quietly; report an indexing diagnostic on the second consecutive failed pass and subsequent failures. Reset the counter on success or confirmed deletion. Restarting the application resets these transient counters. Unsupported versions, corruption, and missing required saved outputs are diagnosed immediately.
+Integrate unsupported-format/corruption diagnostics with existing indexing status surfaces. There is no existing cross-pass retry accounting to rely on: add a small in-memory per-source-path deferral counter for publication races, owned by an explicit per-database indexing context that the indexing worker retains across its per-request indexer recreation — never by a process global; independently created contexts never share counters. After the single immediate retry, defer the first failed pass quietly; report an indexing diagnostic on the second consecutive failed pass and subsequent failures. Only strictly consecutive unstable outcomes accumulate: any other observed outcome or diagnostic for the path — a successful index or current-signature skip, a same-ID collision, a non-unstable parser/diagnostic result such as corruption, an unsupported format, or a missing `CURRENT` in an indexed directory — or a confirmed deletion breaks the sequence, so the following unstable outcome is deferred quietly as a new first occurrence. Reset the counter on any such observed outcome or confirmed deletion, and clear a context's counters only after its `clear_all_sessions` transaction commits; a failed transaction leaves them untouched. Restarting the application resets these transient counters. Unsupported versions, corruption, and missing required saved outputs are diagnosed immediately.
 
 Confirm physical deletion only after a successful enumeration of an accessible source root shows that a previously indexed session directory is absent. An unreadable/missing source root, absent `CURRENT` inside an existing directory, or transient missing dependency does not prove deletion. An absent pointer in a surviving directory is diagnosed as an invalid/incomplete store. The explicit readable `deleting_tree` lifecycle above is also authoritative deletion evidence. Clear removed child links in the same update.
 
@@ -174,7 +217,7 @@ Cover:
 - Incremental no-op passes, journal-only changes, metadata-only changes, favorite preservation, source deletion, and one bad session alongside readable sessions.
 - Manual headless-compatible fixture inspection of existing transcript rendering and an explicit root-session resume check with the target Vibe version. No production UI redesign is expected.
 
-Run repository checks during implementation: `cargo fmt --all -- --check`, `cargo clippy --all -- -D warnings`, and `dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`. Packaging changes, if needed, additionally require Flatpak build verification. This design phase changes documentation only and does not run product tests.
+Run repository checks during implementation: `cargo fmt --all -- --check`, `cargo clippy --all -- -D warnings`, and `dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo test --all --no-fail-fast`. Packaging changes, if needed, additionally require Flatpak build verification. The original design phase changed documentation only; implementation verification and remaining release gates are recorded above.
 
 ## Deliverables and implementation discretion
 
@@ -188,6 +231,6 @@ The initial builder review missed substantive issues subsequently identified by 
 
 Additional upstream inspection confirms that legacy migration allocates a new ID, Unified children have depth one, and all three target 3.0.x releases write minor 9. The review's concern that 3.0.0/3.0.1 might require other minors is therefore not confirmed. Its advice to remove all canonical-form validation is too broad: `_read_document_bytes` explicitly performs that validation for pointer/manifest documents, separately from raw-byte digest checks. Chunk hashes also exclude their required final newline.
 
-Author's product choices in this revision are to retain legacy and migrated Unified stores as separate sessions, omit discarded assistant candidates from transcript/search, and keep operational checkpoint/notice bookkeeping out of conversation messages. Full local saved-result recovery remains required and must be demonstrated in the implementation plan. This revised document still awaits user approval.
+Author's product choices in the design revision were to retain legacy and migrated Unified stores as separate sessions, omit discarded assistant candidates from transcript/search, and keep operational checkpoint/notice bookkeeping out of conversation messages. These choices are implemented in PR #211. Full local saved-result recovery remains required; host and sandbox fixture coverage was added during implementation. This record does not assert completion of the outstanding manual release gates.
 
-A subsequent independent consistency review of this revision found no important internal contradictions or unresolved product decisions blocking planning. This is a consistency check, not a claim that the implementation or remaining field mappings have been verified.
+A subsequent independent consistency review of the design revision found no important internal contradictions or unresolved product decisions blocking planning. That was a design consistency check, not implementation verification. Later implementation-review results and the remaining deviations are recorded in the implementation status section above.
