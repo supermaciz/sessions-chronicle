@@ -517,11 +517,13 @@ mod tests {
         let content = r#"{"out":"abc"}"#;
         write_saved(&dir, "saved.json", content);
         // A different regular file with identical bytes: same content,
-        // different inode — still a swap.
+        // different inode — still a swap.  The original is renamed aside
+        // rather than removed so its inode stays allocated: ext4 readily
+        // hands a just-freed inode number to the next file created.
         let swap_dir = dir.clone();
         let swap_content = content.to_string();
         test_hooks::on_between_check_and_open(Box::new(move || {
-            fs::remove_file(swap_dir.join("saved.json")).unwrap();
+            fs::rename(swap_dir.join("saved.json"), swap_dir.join("original.json")).unwrap();
             fs::write(swap_dir.join("saved.json"), swap_content).unwrap();
         }));
 
