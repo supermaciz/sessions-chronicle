@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 21;
+const CURRENT_DB_VERSION: i64 = 22;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -70,6 +70,7 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        unchanged source is no longer opened on incremental runs, with
 ///        per-representation proven ineligibility and retry state
 ///   21 – vibe_unified_signatures stores Unified Mistral Vibe freshness inputs
+///   22 – clear Kimi Code bundle fingerprints so subagents, swarms and usage are re-parsed
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -135,6 +136,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 21 {
         conn.execute_batch("CREATE TABLE IF NOT EXISTS vibe_unified_signatures (session_dir TEXT PRIMARY KEY, signature TEXT NOT NULL); PRAGMA user_version = 21;")?;
+    }
+    if version < 22 {
+        apply_v22_migration(conn)?;
     }
 
     Ok(())
@@ -842,6 +846,29 @@ fn apply_v20_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from v21 to v22.
+///
+/// Clears fingerprints for Kimi bundle files so existing sessions are
+/// re-parsed with the refreshed subagent, swarm, and usage handling. Other
+/// assistants and sibling path prefixes retain their fingerprints.
+fn apply_v22_migration(conn: &Connection) -> Result<()> {
+    if table_exists(conn, "sessions")? && table_exists(conn, "file_fingerprints")? {
+        conn.execute(
+            "DELETE FROM file_fingerprints
+             WHERE EXISTS (
+                 SELECT 1 FROM sessions s
+                 WHERE s.tool = 'kimi_code' AND s.is_subagent = 0
+                   AND file_fingerprints.file_path >= s.file_path || '/'
+                   AND file_fingerprints.file_path < s.file_path || '0'
+             )",
+            [],
+        )?;
+    }
+
+    conn.execute_batch("PRAGMA user_version = 22")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -854,11 +881,11 @@ mod tests {
         conn.execute_batch("DROP TABLE vibe_unified_signatures; PRAGMA user_version=20; INSERT INTO file_fingerprints(file_path, size, mtime_ns) VALUES ('preserved', 1, 2);").unwrap();
         conn.execute_batch("INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, pinned_at) VALUES ('preserved', 'mistral_vibe', 1, 1, 'legacy/session', 2, 1234); INSERT INTO messages(session_id, message_index, role, content, timestamp) VALUES ('preserved', 0, 'user', 'preserved prompt', 1);").unwrap();
         initialize_database(&conn).unwrap();
-        assert_eq!(CURRENT_DB_VERSION, 21);
+        assert_eq!(CURRENT_DB_VERSION, 22);
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            21
+            CURRENT_DB_VERSION
         );
         assert!(table_exists(&conn, "vibe_unified_signatures"));
         assert_eq!(
@@ -904,6 +931,46 @@ mod tests {
             })
             .unwrap(),
             "signature"
+        );
+    }
+
+    #[test]
+    fn migration_v22_clears_only_kimi_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, is_subagent)
+             VALUES ('kimi-main', 'kimi_code', 1, 1, '/h/sessions/wd_x/session_a', 2, 0);
+             INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES
+                 ('/h/sessions/wd_x/session_a/state.json', 1, 1),
+                 ('/h/sessions/wd_x/session_a/agents/main/wire.jsonl', 1, 1),
+                 ('/h/sessions/wd_x/session_ab/state.json', 1, 1),
+                 ('/data/claude/one.jsonl', 1, 1);
+             PRAGMA user_version = 21;",
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+
+        let version = conn
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(version, 22);
+
+        let mut statement = conn
+            .prepare("SELECT file_path FROM file_fingerprints ORDER BY file_path")
+            .unwrap();
+        let remaining = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            remaining,
+            vec![
+                "/data/claude/one.jsonl",
+                "/h/sessions/wd_x/session_ab/state.json"
+            ]
         );
     }
 

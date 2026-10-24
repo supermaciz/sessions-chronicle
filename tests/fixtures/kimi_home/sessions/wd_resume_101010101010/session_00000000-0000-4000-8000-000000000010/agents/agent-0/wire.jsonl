@@ -1,0 +1,2 @@
+{"type":"metadata","protocol_version":"1.5"}
+{"type":"turn.prompt","time":1785320000025,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"system_trigger","name":"subagent"}}

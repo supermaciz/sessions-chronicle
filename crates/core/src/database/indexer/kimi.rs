@@ -683,12 +683,12 @@ mod tests {
         let first = indexer
             .index_kimi_sessions_incremental(home.path())
             .unwrap();
-        assert_eq!(first.indexed, 7);
+        assert_eq!(first.indexed, 9);
         let unchanged = indexer
             .index_kimi_sessions_incremental(home.path())
             .unwrap();
         assert_eq!(unchanged.indexed, 0);
-        assert_eq!(unchanged.skipped, 7);
+        assert_eq!(unchanged.skipped, 9);
 
         let mut state: serde_json::Value =
             serde_json::from_slice(&fs::read(dir.join("state.json")).unwrap()).unwrap();
@@ -801,7 +801,7 @@ mod tests {
         let discovery = discover_kimi_sessions(temp.path(), &mut errors).unwrap();
 
         assert!(discovery.enumeration_complete);
-        assert_eq!(discovery.candidates.len(), 8);
+        assert_eq!(discovery.candidates.len(), 10);
         assert!(errors.is_empty());
         assert!(discovery.candidates.iter().all(|candidate| {
             candidate
@@ -877,7 +877,7 @@ mod tests {
                 .index_kimi_sessions_internal(temp.path(), true, &mut errors)
                 .unwrap();
 
-            assert_eq!(stats.indexed, 6);
+            assert_eq!(stats.indexed, 8);
             assert_eq!(stats.skipped, 1);
             assert_eq!(stats.errors, 0);
             assert!(errors.is_empty());

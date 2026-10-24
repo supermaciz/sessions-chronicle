@@ -6,6 +6,15 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    const GIT_CONTEXT: &str =
+        r"<git-context>\nWorking directory: /tmp/project\nBranch: main\n</git-context>\n\n";
+
+    fn child_prompt(time: i64, text: &str) -> String {
+        format!(
+            r#"{{"type":"turn.prompt","time":{time},"input":[{{"type":"text","text":"{GIT_CONTEXT}{text}"}}],"origin":{{"kind":"system_trigger","name":"subagent"}}}}"#
+        )
+    }
+
     fn write_bundle(state: Value, records: &[&str]) -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         let session_dir = root
@@ -64,6 +73,529 @@ mod tests {
             "workDir": "/tmp/project",
             "agents": { "main": { "type": "main", "parentAgentId": null } }
         })
+    }
+
+    fn swarm_state() -> Value {
+        let mut metadata = state();
+        for (agent_id, item) in [("agent-0", "A"), ("agent-1", "B")] {
+            metadata["agents"][agent_id] = json!({
+                "type": "sub",
+                "labels": {"parentAgentId": "main", "swarmItem": item, "profileName": "explore"}
+            });
+        }
+        metadata
+    }
+
+    fn swarm_records(result: Option<Value>) -> Vec<Value> {
+        let mut records = vec![
+            json!({"type":"turn.prompt", "time":1785320000000_i64, "input":[{"type":"text", "text":"Review both"}], "origin":{"kind":"user"}}),
+            json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"text", "text":"Starting review"}}}),
+            json!({"type":"context.append_loop_event", "time":1785320000010_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_0", "name":"AgentSwarm", "args":{"description":"Review items", "subagent_type":"explore", "prompt_template":"Review {{item}} now", "items":["A", "B"]}}}),
+        ];
+        if let Some(result) = result {
+            records.push(json!({"type":"context.append_loop_event", "time":1785320000040_i64, "event":{"type":"tool.result", "toolCallId":"AgentSwarm_0", "result":result}}));
+        }
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"text", "text":"Review complete"}}}));
+        records
+    }
+
+    fn parse_swarm_records(metadata: Value, records: &[Value]) -> KimiParsedBundle {
+        let records: Vec<_> = records.iter().map(Value::to_string).collect();
+        let root = write_bundle(
+            metadata,
+            &records.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        for (agent_id, prompt) in [("agent-0", "Review A now"), ("agent-1", "Review B now")] {
+            write_agent_journal(&root, agent_id, &[&child_prompt(1785320000030, prompt)]);
+        }
+        KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap()
+    }
+
+    fn sub_state() -> Value {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({"type": "sub", "parentAgentId": "main"});
+        metadata
+    }
+
+    fn agents_state(agents: Value) -> Value {
+        let mut metadata = state();
+        metadata["agents"] = agents;
+        metadata
+    }
+
+    fn try_parse_agents_bundle(
+        metadata: Value,
+        main_records: &[&str],
+        journals: &[(&str, &[&str])],
+    ) -> Result<KimiParsedBundle> {
+        let root = write_bundle(metadata, main_records);
+        for (agent_id, records) in journals {
+            write_agent_journal(&root, agent_id, records);
+        }
+        KimiCodeParser::new(root.path()).parse_session_dir(&session_dir(&root))
+    }
+
+    fn parse_agents_bundle(
+        metadata: Value,
+        main_records: &[&str],
+        journals: &[(&str, &[&str])],
+    ) -> KimiParsedBundle {
+        try_parse_agents_bundle(metadata, main_records, journals).unwrap()
+    }
+
+    fn assert_no_user_messages(result: Result<KimiParsedBundle>) {
+        let error = result.unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ParseError>(),
+            Some(ParseError::NoUserMessages)
+        ));
+    }
+
+    // Assumes the `swarm_records` layout: the user prompt and the "Starting review"
+    // text part precede the swarm rows, so row `index` sits at transcript item `index + 2`.
+    fn assert_linked_swarm_row(
+        parsed: &KimiParsedBundle,
+        index: usize,
+        agent_id: &str,
+        title: &str,
+        prompt: &str,
+        summary: Option<&str>,
+    ) {
+        let row = &parsed.main.subagents[index];
+        assert_eq!(row.agent_id.as_deref(), Some(agent_id));
+        assert_eq!(row.title, title);
+        assert_eq!(row.prompt.as_deref(), Some(prompt));
+        assert_eq!(row.result_summary.as_deref(), summary);
+        assert_eq!(
+            row.child_session_id.as_deref(),
+            Some(parsed.children[index].session.id.as_str())
+        );
+        assert_eq!(
+            parsed.main.transcript_items[index + 2]
+                .subagent_id
+                .as_deref(),
+            Some(row.id.as_str())
+        );
+    }
+
+    #[test]
+    fn swarm_call_expands_into_one_item_per_child() {
+        // Result order differs from items: transcript order must follow args.items.
+        let records = swarm_records(Some(
+            json!({"output":"<agent_swarm_result>\n<summary>completed: 2</summary>\n<subagent agent_id=\"agent-1\" item=\"B\" outcome=\"completed\">Body B</subagent>\n<subagent agent_id=\"agent-0\" item=\"A\" outcome=\"completed\">Body A</subagent>\n</agent_swarm_result>"}),
+        ));
+        let parsed = parse_swarm_records(swarm_state(), &records);
+        assert_eq!(
+            parsed
+                .main
+                .transcript_items
+                .iter()
+                .map(|item| item.kind.clone())
+                .collect::<Vec<_>>(),
+            [
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Subagent,
+                TranscriptItemKind::Subagent,
+                TranscriptItemKind::Message
+            ]
+        );
+        assert!(parsed.main.tool_calls.is_empty());
+        assert_eq!(parsed.main.subagents.len(), 2);
+        for (index, (agent_id, title, prompt, summary)) in [
+            ("agent-0", "A", "Review A now", "Body A"),
+            ("agent-1", "B", "Review B now", "Body B"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let row = &parsed.main.subagents[index];
+            assert_eq!(
+                row.id,
+                format!(
+                    "kimi-agent-call::session_00000000-0000-4000-8000-000000000001::AgentSwarm_0::{agent_id}"
+                )
+            );
+            assert_eq!(row.agent_name.as_deref(), Some("explore"));
+            assert_eq!(row.parser_ref.as_deref(), Some("AgentSwarm_0"));
+            assert_linked_swarm_row(&parsed, index, agent_id, title, prompt, Some(summary));
+        }
+    }
+
+    #[test]
+    fn swarm_retry_explicit_result_reserves_child_before_earlier_fallback() {
+        let mut records = swarm_records(Some(json!({"output":"Session closed", "isError":true})));
+        records[2]["event"]["args"]["items"] = json!(["A"]);
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_retry", "name":"AgentSwarm", "args":{"items":["A"]}}}));
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"tool.result", "toolCallId":"AgentSwarm_retry", "result":{"output":"<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Retry body</subagent>\n</agent_swarm_result>"}}}));
+
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(parsed.subagents.len(), 1);
+        let row = &parsed.subagents[0];
+        assert_eq!(row.parser_ref.as_deref(), Some("AgentSwarm_retry"));
+        assert_eq!(row.agent_id.as_deref(), Some("agent-0"));
+        assert_eq!(row.result_summary.as_deref(), Some("Retry body"));
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert!(parsed.tool_calls[0].id.ends_with("::AgentSwarm_0"));
+        assert_eq!(
+            parsed.transcript_items[2].kind,
+            TranscriptItemKind::ToolCall
+        );
+        assert_eq!(
+            parsed.transcript_items[4].subagent_id.as_deref(),
+            Some(row.id.as_str())
+        );
+    }
+
+    #[test]
+    fn swarm_shared_fallback_child_keeps_both_attempts_generic() {
+        let mut records = swarm_records(None);
+        records[2]["event"]["args"]["items"] = json!(["A"]);
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_retry", "name":"AgentSwarm", "args":{"items":["A"]}}}));
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_independent", "name":"AgentSwarm", "args":{"items":["B"]}}}));
+
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].parser_ref.as_deref(),
+            Some("AgentSwarm_independent")
+        );
+        assert_eq!(parsed.subagents[0].agent_id.as_deref(), Some("agent-1"));
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert!(
+            parsed
+                .tool_calls
+                .iter()
+                .any(|call| call.id.ends_with("::AgentSwarm_0"))
+        );
+        assert!(
+            parsed
+                .tool_calls
+                .iter()
+                .any(|call| call.id.ends_with("::AgentSwarm_retry"))
+        );
+    }
+
+    #[test]
+    fn swarm_incomplete_fallback_claim_prevents_wrong_link_from_other_attempt() {
+        let mut records = swarm_records(None);
+        records[2]["event"]["args"]["items"] = json!(["A"]);
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_retry", "name":"AgentSwarm", "args":{"items":["A", "missing"]}}}));
+
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 2);
+    }
+
+    #[test]
+    fn swarm_duplicate_explicit_claims_stay_generic_and_reserve_children() {
+        let output = "<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Body A</subagent>\n<subagent agent_id=\"agent-1\" item=\"B\">Body B</subagent>\n</agent_swarm_result>";
+        let mut records = swarm_records(Some(json!({"output":output})));
+        // Overlap on A invalidates both whole explicit swarms, including B.
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_duplicate", "name":"AgentSwarm", "args":{"items":["A"]}}}));
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"tool.result", "toolCallId":"AgentSwarm_duplicate", "result":{"output":"<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Duplicate A</subagent>\n</agent_swarm_result>"}}}));
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_fallback", "name":"AgentSwarm", "args":{"items":["B"]}}}));
+
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 3);
+        assert_eq!(
+            parsed
+                .transcript_items
+                .iter()
+                .filter(|item| item.kind == TranscriptItemKind::ToolCall)
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn swarm_label_items_preserve_whitespace_in_results() {
+        assert_swarm_preserves_whitespace_identity(false, true);
+    }
+
+    #[test]
+    fn swarm_legacy_items_preserve_whitespace_in_results() {
+        assert_swarm_preserves_whitespace_identity(true, true);
+    }
+
+    #[test]
+    fn swarm_label_items_preserve_whitespace_in_pending_fallback() {
+        assert_swarm_preserves_whitespace_identity(false, false);
+    }
+
+    #[test]
+    fn swarm_legacy_items_preserve_whitespace_in_pending_fallback() {
+        assert_swarm_preserves_whitespace_identity(true, false);
+    }
+
+    fn assert_swarm_preserves_whitespace_identity(legacy: bool, with_result: bool) {
+        let mut metadata = swarm_state();
+        for (agent_id, item) in [("agent-0", " A "), ("agent-1", "A")] {
+            if legacy {
+                metadata["agents"][agent_id]["labels"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("swarmItem");
+                metadata["agents"][agent_id]["swarmItem"] = json!(item);
+            } else {
+                metadata["agents"][agent_id]["labels"]["swarmItem"] = json!(item);
+            }
+        }
+        let result = with_result.then(|| json!({"output":"<agent_swarm_result>\n<subagent agent_id=\"agent-1\" item=\"A\">Plain body</subagent>\n<subagent agent_id=\"agent-0\" item=\" A \">Spaced body</subagent>\n</agent_swarm_result>"}));
+        let mut records = swarm_records(result);
+        records[2]["event"]["args"]["items"] = json!([" A ", "A"]);
+        let parsed = parse_swarm_records(metadata, &records);
+        assert_eq!(parsed.main.subagents.len(), 2);
+        assert!(parsed.main.tool_calls.is_empty());
+        for (index, (agent_id, title, prompt, summary)) in [
+            ("agent-0", " A ", "Review  A  now", "Spaced body"),
+            ("agent-1", "A", "Review A now", "Plain body"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_linked_swarm_row(
+                &parsed,
+                index,
+                agent_id,
+                title,
+                prompt,
+                with_result.then_some(summary),
+            );
+        }
+    }
+
+    #[test]
+    fn swarm_null_items_stay_generic_despite_valid_result() {
+        assert_invalid_swarm_items_stay_generic(Value::Null);
+    }
+
+    #[test]
+    fn swarm_non_array_items_stay_generic_despite_valid_result() {
+        assert_invalid_swarm_items_stay_generic(json!("A"));
+    }
+
+    #[test]
+    fn swarm_mixed_items_stay_generic_despite_valid_result() {
+        assert_invalid_swarm_items_stay_generic(json!(["A", null]));
+    }
+
+    fn assert_invalid_swarm_items_stay_generic(items: Value) {
+        const OUTPUT: &str = "<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Body A</subagent>\n</agent_swarm_result>";
+        let mut records = swarm_records(Some(json!({"output":OUTPUT})));
+        records[2]["event"]["args"]
+            .as_object_mut()
+            .unwrap()
+            .remove("items");
+        // Absence still permits result-order resolution through the real parser.
+        let absent = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(absent.subagents.len(), 1);
+        assert_eq!(absent.subagents[0].agent_id.as_deref(), Some("agent-0"));
+        assert_eq!(
+            absent.subagents[0].result_summary.as_deref(),
+            Some("Body A")
+        );
+        assert!(absent.tool_calls.is_empty());
+
+        records[2]["event"]["args"]["items"] = items.clone();
+        let parsed = parse_swarm_records(swarm_state(), &records);
+        assert_eq!(parsed.children.len(), 2);
+        assert!(parsed.main.subagents.is_empty());
+        assert_eq!(parsed.main.tool_calls.len(), 1);
+        let call = &parsed.main.tool_calls[0];
+        assert_eq!(call.tool_name, "AgentSwarm");
+        assert_eq!(call.output_text.as_deref(), Some(OUTPUT));
+        let input: Value = serde_json::from_str(call.input_json.as_deref().unwrap()).unwrap();
+        assert_eq!(input["items"], items);
+        assert_eq!(
+            parsed.main.transcript_items[2].kind,
+            TranscriptItemKind::ToolCall
+        );
+        assert_eq!(
+            parsed.main.transcript_items[2].tool_call_id.as_deref(),
+            Some(call.id.as_str())
+        );
+    }
+
+    #[test]
+    fn swarm_reasoning_moves_to_first_item() {
+        let mut records = swarm_records(None);
+        records.insert(2, json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"think", "think":"Fan out"}}}));
+        records.insert(4, json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"think", "think":"Summarize"}}}));
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"think", "think":"Read next"}}}));
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"tool.call", "toolCallId":"Read_0", "name":"Read", "args":{"path":"README.md"}}}));
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(
+            parsed
+                .reasoning_attachments
+                .iter()
+                .map(|attachment| (
+                    attachment.transcript_item_index,
+                    attachment.visible_text.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (2, Some("Fan out")),
+                (4, Some("Summarize")),
+                (5, Some("Read next"))
+            ]
+        );
+        assert_eq!(
+            parsed.transcript_items[2].kind,
+            TranscriptItemKind::Subagent
+        );
+        assert_eq!(
+            parsed.transcript_items[3].kind,
+            TranscriptItemKind::Subagent
+        );
+        assert_eq!(
+            parsed.transcript_items[5].kind,
+            TranscriptItemKind::ToolCall
+        );
+    }
+
+    #[test]
+    fn pending_swarm_expands_through_items() {
+        let mut metadata = swarm_state();
+        metadata["agents"]["agent-1"]["labels"]
+            .as_object_mut()
+            .unwrap()
+            .remove("profileName");
+        let parsed = parse_swarm_records(metadata, &swarm_records(None)).main;
+        assert_eq!(parsed.subagents.len(), 2);
+        assert!(
+            parsed
+                .subagents
+                .iter()
+                .all(|row| row.result_summary.is_none())
+        );
+        assert_eq!(parsed.subagents[1].agent_name.as_deref(), Some("explore"));
+        assert!(parsed.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn failed_swarm_uses_error_output_summary() {
+        let mut metadata = swarm_state();
+        for (agent_id, item) in [("agent-0", "A"), ("agent-1", "B")] {
+            metadata["agents"][agent_id]["labels"]
+                .as_object_mut()
+                .unwrap()
+                .remove("swarmItem");
+            metadata["agents"][agent_id]["swarmItem"] = json!(item);
+        }
+        let parsed = parse_swarm_records(
+            metadata,
+            &swarm_records(Some(json!({"output":"Session closed", "isError":true}))),
+        )
+        .main;
+        assert_eq!(parsed.subagents.len(), 2);
+        assert!(
+            parsed
+                .subagents
+                .iter()
+                .all(|row| row.result_summary.as_deref() == Some("Session closed"))
+        );
+        assert!(parsed.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn unresolvable_swarm_stays_generic() {
+        let mut records = swarm_records(None);
+        records[2]["event"]["args"]["items"] = json!(["A", "missing"]);
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].tool_name, "AgentSwarm");
+        assert_eq!(
+            parsed.transcript_items[2].kind,
+            TranscriptItemKind::ToolCall
+        );
+    }
+
+    #[test]
+    fn later_resume_can_target_a_swarm_child() {
+        let mut records = swarm_records(None);
+        // Journal order wins over a backwards wall clock for an explicit resume.
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000005_i64, "event":{"type":"tool.call", "toolCallId":"Agent_resume", "name":"Agent", "args":{"resume":"agent-0"}}}));
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(parsed.subagents.len(), 3);
+        assert_eq!(
+            parsed.subagents[2].parser_ref.as_deref(),
+            Some("Agent_resume")
+        );
+        assert_eq!(
+            parsed.subagents[2].child_session_id,
+            parsed.subagents[0].child_session_id
+        );
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(
+            parsed.transcript_items[5].subagent_id.as_deref(),
+            Some(parsed.subagents[2].id.as_str())
+        );
+    }
+
+    #[test]
+    fn synthetic_swarm_consumption_rejects_earlier_and_non_resume_agent_evidence() {
+        for (earlier, args, result) in [
+            (true, json!({"resume":"agent-0"}), None),
+            (true, json!({"agent_id":"agent-0"}), None),
+            (false, json!({"agent_id":"agent-0"}), None),
+            (
+                false,
+                json!({}),
+                Some(json!({"output":"agent_id: agent-0\nstatus: completed\n\nDone."})),
+            ),
+            (false, json!({}), None),
+        ] {
+            let mut records = swarm_records(Some(
+                json!({"output":"<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Body A</subagent>\n<subagent agent_id=\"agent-1\" item=\"B\">Body B</subagent>\n</agent_swarm_result>"}),
+            ));
+            // No swarmItem label: consumed children must also be excluded from chronology.
+            let mut metadata = swarm_state();
+            for agent_id in ["agent-0", "agent-1"] {
+                metadata["agents"][agent_id]["labels"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("swarmItem");
+            }
+            // Deliberately inverted clock: call order, not timestamp, defines a later resume.
+            let call = json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"Agent_rejected", "name":"Agent", "args":args}});
+            if earlier {
+                records.insert(2, call);
+            } else {
+                records.push(call);
+            }
+            let chronological = args == json!({}) && result.is_none();
+            if chronological {
+                // Match cardinalities so excluding consumed children is what prevents links.
+                records.push(json!({"type":"context.append_loop_event", "time":1785320000021_i64, "event":{"type":"tool.call", "toolCallId":"Agent_also_rejected", "name":"Agent", "args":{}}}));
+            }
+            if let Some(result) = result {
+                records.push(json!({"type":"context.append_loop_event", "event":{"type":"tool.result", "toolCallId":"Agent_rejected", "result":result}}));
+            }
+            let parsed = parse_swarm_records(metadata, &records).main;
+            assert_eq!(
+                parsed.tool_calls.len(),
+                if chronological { 2 } else { 1 },
+                "earlier={earlier}, args={args}"
+            );
+            assert!(
+                parsed
+                    .tool_calls
+                    .iter()
+                    .all(|call| call.tool_name == "Agent")
+            );
+            assert_eq!(parsed.subagents.len(), 2);
+            assert!(
+                parsed
+                    .subagents
+                    .iter()
+                    .all(|row| row.parser_ref.as_deref() == Some("AgentSwarm_0"))
+            );
+        }
     }
 
     #[test]
@@ -127,13 +659,199 @@ mod tests {
                 r#"{"type":"turn.prompt","input":[{"type":"text","text":"Skill body"}],"origin":{"kind":"skill_activation"}}"#,
             ],
         );
-        let error = KimiCodeParser::new(injected.path())
-            .parse_session_dir(&session_dir(&injected))
-            .unwrap_err();
-        assert!(matches!(
-            error.downcast_ref::<ParseError>(),
-            Some(ParseError::NoUserMessages)
+        assert_no_user_messages(
+            KimiCodeParser::new(injected.path()).parse_session_dir(&session_dir(&injected)),
+        );
+    }
+
+    #[test]
+    fn child_journal_accepts_subagent_trigger_prompt() {
+        let parsed = parse_agents_bundle(
+            sub_state(),
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+            &[(
+                "agent-0",
+                &[&child_prompt(1785320000010, "Inspect parser safety")],
+            )],
+        );
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children[0].messages[0].content,
+            "Inspect parser safety"
+        );
+        assert_eq!(
+            parsed.children[0].session.first_prompt.as_deref(),
+            Some("Inspect parser safety")
+        );
+    }
+
+    #[test]
+    fn main_journal_rejects_subagent_trigger_prompt() {
+        assert_no_user_messages(try_parse_agents_bundle(
+            state(),
+            &[&child_prompt(1785320000000, "Subagent task")],
+            &[],
         ));
+    }
+
+    #[test]
+    fn child_rejects_other_system_triggers_and_injections() {
+        let parsed = parse_agents_bundle(
+            sub_state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+            &[(
+                "agent-0",
+                &[
+                    r#"{"type":"turn.prompt","input":[{"type":"text","text":"Cron"}],"origin":{"kind":"system_trigger","name":"cron"}}"#,
+                    r#"{"type":"turn.prompt","input":[{"type":"text","text":"Injection"}],"origin":{"kind":"injection"}}"#,
+                ],
+            )],
+        );
+
+        assert!(parsed.children.is_empty());
+    }
+
+    #[test]
+    fn child_resume_prompts_become_user_messages() {
+        let parsed = parse_agents_bundle(
+            sub_state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+            &[(
+                "agent-0",
+                &[
+                    &child_prompt(1785320000010, "First task"),
+                    r#"{"type":"turn.prompt","time":1785320000020,"input":[{"type":"text","text":"Second task"}],"origin":{"kind":"system_trigger","name":"subagent"}}"#,
+                    r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Third task"}],"origin":{"kind":"system_trigger","name":"subagent"}}"#,
+                ],
+            )],
+        );
+        let child = &parsed.children[0];
+
+        assert_eq!(child.messages.len(), 3);
+        assert!(
+            child
+                .messages
+                .iter()
+                .all(|message| message.role == Role::User)
+        );
+        assert_eq!(
+            child
+                .messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            ["First task", "Second task", "Third task"]
+        );
+    }
+
+    #[test]
+    fn child_unclosed_git_context_is_kept() {
+        let unclosed = "<git-context>\\nWorking directory: /tmp/project\\nTask remains here";
+        let prompt = format!(
+            r#"{{"type":"turn.prompt","input":[{{"type":"text","text":"{unclosed}"}}],"origin":{{"kind":"system_trigger","name":"subagent"}}}}"#
+        );
+        let parsed = parse_agents_bundle(
+            sub_state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+            &[("agent-0", &[&prompt])],
+        );
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children[0].messages[0].content,
+            unclosed.replace("\\n", "\n")
+        );
+    }
+
+    #[test]
+    fn child_with_only_git_context_remains_indexed() {
+        let parsed = parse_agents_bundle(
+            sub_state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+            &[("agent-0", &[&child_prompt(1785320000010, "")])],
+        );
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children[0].messages[0].content,
+            GIT_CONTEXT.replace("\\n", "\n")
+        );
+    }
+
+    #[test]
+    fn forked_child_hides_copied_context() {
+        let parsed = parse_agents_bundle(
+            sub_state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+            &[(
+                "agent-0",
+                &[
+                    r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"Copied parent prompt"}],"origin":{"kind":"user"}}}"#,
+                    r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"Copied parent follow-up"}],"origin":{"kind":"user"}}}"#,
+                    &child_prompt(1785320000010, "Actual child task"),
+                ],
+            )],
+        );
+
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(parsed.children[0].messages.len(), 1);
+        assert_eq!(parsed.children[0].messages[0].content, "Actual child task");
+    }
+
+    #[test]
+    fn labels_supply_profile_swarm_item_and_parent_fallback() {
+        let mut metadata = state();
+        metadata["agents"]["agent-0"] = json!({
+            "type": "sub",
+            "labels": {
+                "parentAgentId": "main",
+                "profileName": "explore",
+                "swarmItem": "A"
+            }
+        });
+        metadata["agents"]["agent-1"] = json!({
+            "type": "sub",
+            "parentAgentId": "main",
+            "swarmItem": "B"
+        });
+        let root = write_bundle(
+            metadata,
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main prompt"}],"origin":{"kind":"user"}}"#,
+            ],
+        );
+        write_agent_journal(&root, "agent-0", &[&child_prompt(1785320000010, "Task A")]);
+        write_agent_journal(&root, "agent-1", &[&child_prompt(1785320000020, "Task B")]);
+
+        let parsed = KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap();
+        let loaded = load_state(&session_dir(&root).join("state.json")).unwrap();
+
+        assert_eq!(parsed.children.len(), 2);
+        assert_eq!(
+            loaded.agents["agent-0"].parent_agent_id.as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            loaded.agents["agent-0"].profile_name.as_deref(),
+            Some("explore")
+        );
+        assert_eq!(loaded.agents["agent-0"].swarm_item.as_deref(), Some("A"));
+        assert_eq!(loaded.agents["agent-1"].swarm_item.as_deref(), Some("B"));
     }
 
     #[test]
@@ -454,7 +1172,7 @@ mod tests {
     }
 
     #[test]
-    fn models_follow_steps_and_turn_usage_wins_without_double_counting() {
+    fn models_follow_steps_and_usage_records_win_without_double_counting() {
         let root = write_bundle(
             state(),
             &[
@@ -469,6 +1187,8 @@ mod tests {
                 r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-3","turnId":"0","step":3}}"#,
                 r#"{"type":"context.append_loop_event","event":{"type":"content.part","stepUuid":"step-3","part":{"type":"text","text":"Fallback model"}}}"#,
                 r#"{"type":"usage.record","usageScope":"turn","usage":{"inputOther":100,"output":20,"inputCacheRead":30,"inputCacheCreation":4}}"#,
+                r#"{"type":"usage.record","usageScope":"session","usage":{"inputOther":50,"output":5,"inputCacheRead":0,"inputCacheCreation":0}}"#,
+                r#"{"type":"usage.record","usage":{"inputOther":1,"output":0}}"#,
                 r#"{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"step-2","usage":{"inputOther":999,"output":999,"inputCacheRead":999,"inputCacheCreation":999}}}"#,
             ],
         );
@@ -488,8 +1208,8 @@ mod tests {
         assert_eq!(
             parsed.main.token_usage,
             Some(TokenUsage {
-                input_tokens: 100,
-                output_tokens: 20,
+                input_tokens: 151,
+                output_tokens: 25,
                 cache_read_tokens: Some(30),
                 cache_write_tokens: Some(4),
                 reasoning_tokens: None,
@@ -536,48 +1256,41 @@ mod tests {
 
     #[test]
     fn direct_sibling_and_nested() {
-        let mut metadata = state();
-        metadata["agents"] = json!({
-            "main": { "type": "main", "parentAgentId": null },
-            "agent-0": { "type": "sub", "parentAgentId": "main" },
-            "agent-1": { "type": "sub", "parentAgentId": "main" },
-            "agent-nested": { "type": "sub", "parentAgentId": "agent-0" },
-            "independent-0": { "type": "independent", "parentAgentId": null },
-            "unknown-parent": { "type": "sub", "parentAgentId": "unknown" },
-            "cycle-a": { "type": "sub", "parentAgentId": "cycle-b" },
-            "cycle-b": { "type": "sub", "parentAgentId": "cycle-a" }
-        });
-        let root = write_bundle(
-            metadata,
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" },
+                "agent-1": { "type": "sub", "parentAgentId": "main" },
+                "agent-nested": { "type": "sub", "parentAgentId": "agent-0" },
+                "independent-0": { "type": "independent", "parentAgentId": null },
+                "unknown-parent": { "type": "sub", "parentAgentId": "unknown" },
+                "cycle-a": { "type": "sub", "parentAgentId": "cycle-b" },
+                "cycle-b": { "type": "sub", "parentAgentId": "cycle-a" }
+            })),
             &[
                 r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
             ],
-        );
-        write_agent_journal(
-            &root,
-            "agent-0",
             &[
-                r#"{"type":"turn.prompt","time":1785320000100,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+                (
+                    "agent-0",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000100,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
+                (
+                    "agent-1",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000200,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
+                (
+                    "agent-nested",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000300,"input":[{"type":"text","text":"Nested"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
             ],
         );
-        write_agent_journal(
-            &root,
-            "agent-1",
-            &[
-                r#"{"type":"turn.prompt","time":1785320000200,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
-            ],
-        );
-        write_agent_journal(
-            &root,
-            "agent-nested",
-            &[
-                r#"{"type":"turn.prompt","time":1785320000300,"input":[{"type":"text","text":"Nested"}],"origin":{"kind":"user"}}"#,
-            ],
-        );
-
-        let parsed = KimiCodeParser::new(root.path())
-            .parse_session_dir(&session_dir(&root))
-            .unwrap();
 
         assert_eq!(
             parsed
@@ -609,32 +1322,23 @@ mod tests {
 
     #[test]
     fn matched_agent_call() {
-        let mut metadata = state();
-        metadata["agents"] = json!({
-            "main": { "type": "main", "parentAgentId": null },
-            "agent-0": { "type": "sub", "parentAgentId": "main" }
-        });
-        let root = write_bundle(
-            metadata,
+        let matched = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" }
+            })),
             &[
                 r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"content.part","part":{"type":"text","text":"Planning"}}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0","subagent_type":"explore","prompt":"Inspect parser safety"}}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"done"}}}"#,
             ],
-        );
-        write_agent_journal(
-            &root,
-            "agent-0",
-            &[
-                r#"{"type":"turn.prompt","time":1785320000025,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
-            ],
-        );
-
-        let matched = KimiCodeParser::new(root.path())
-            .parse_session_dir(&session_dir(&root))
-            .unwrap()
-            .main;
+            &[(
+                "agent-0",
+                &[r#"{"type":"turn.prompt","time":1785320000025,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#],
+            )],
+        )
+        .main;
 
         assert_eq!(matched.subagents[0].agent_id.as_deref(), Some("agent-0"));
         assert_eq!(
@@ -660,38 +1364,32 @@ mod tests {
 
     #[test]
     fn ambiguous_agent_calls() {
-        let mut metadata = state();
-        metadata["agents"] = json!({
-            "main": { "type": "main", "parentAgentId": null },
-            "agent-0": { "type": "sub", "parentAgentId": "main" },
-            "agent-1": { "type": "sub", "parentAgentId": "main" }
-        });
-        let root = write_bundle(
-            metadata,
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" },
+                "agent-1": { "type": "sub", "parentAgentId": "main" }
+            })),
             &[
                 r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
                 r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_1","name":"Agent","args":{}}}"#,
             ],
-        );
-        write_agent_journal(
-            &root,
-            "agent-0",
             &[
-                r#"{"type":"turn.prompt","time":1785320000020,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+                (
+                    "agent-0",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000020,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
+                (
+                    "agent-1",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
             ],
         );
-        write_agent_journal(
-            &root,
-            "agent-1",
-            &[
-                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
-            ],
-        );
-
-        let parsed = KimiCodeParser::new(root.path())
-            .parse_session_dir(&session_dir(&root))
-            .unwrap();
 
         assert_eq!(parsed.children.len(), 2);
         assert_eq!(parsed.main.subagents.len(), 0);
@@ -702,6 +1400,89 @@ mod tests {
                 .iter()
                 .all(|call| call.tool_name == "Agent")
         );
+    }
+
+    #[test]
+    fn chronological_agent_matching_rejects_conflicting_competing_owner() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000005,"event":{"type":"tool.call","toolCallId":"Agent_interrupted","name":"Agent","args":{}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000006,"event":{"type":"tool.result","toolCallId":"Agent_interrupted","result":{"output":"Interrupted by user","isError":true}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_conflict","name":"Agent","args":{"resume":"agent-other"}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000012,"event":{"type":"tool.result","toolCallId":"Agent_conflict","result":{"output":"agent_id: agent-0\nstatus: completed\n\nDone."}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert!(
+            parsed
+                .tool_calls
+                .iter()
+                .all(|call| call.tool_name == "Agent")
+        );
+    }
+
+    #[test]
+    fn chronological_agent_matching_rejects_generic_swarm_competing_owner() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000005,"event":{"type":"tool.call","toolCallId":"Agent_interrupted","name":"Agent","args":{}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000006,"event":{"type":"tool.result","toolCallId":"Agent_interrupted","result":{"output":"Interrupted by user","isError":true}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"AgentSwarm_unmatched","name":"AgentSwarm","args":{"items":["A"]}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert!(
+            parsed
+                .tool_calls
+                .iter()
+                .any(|call| call.tool_name == "AgentSwarm")
+        );
+    }
+
+    #[test]
+    fn agent_result_header_ignores_summary_body_ids() {
+        for output in [
+            "agent_id: agent-0\nstatus: completed\n\n[summary]\nNested result:\nagent_id: agent-other",
+            "agentId: agent-0\nstatus: completed\r\n \r\nNested result:\nagentId: agent-other",
+            "agent_id: agent-0",
+        ] {
+            let result = json!({"type":"context.append_loop_event", "event":{"type":"tool.result", "toolCallId":"Agent_0", "result":{"output":output}}}).to_string();
+            let parsed = parse_single_agent_call(&[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+                &result,
+            ]);
+
+            assert_eq!(parsed.subagents.len(), 1, "{output}");
+            assert_eq!(parsed.subagents[0].agent_id.as_deref(), Some("agent-0"));
+            assert!(parsed.tool_calls.is_empty());
+        }
+    }
+
+    #[test]
+    fn agent_result_body_only_ids_are_not_explicit_evidence() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"Quoted result:\nagent_id: agent-0"}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls[0].tool_name, "Agent");
+    }
+
+    #[test]
+    fn conflicting_agent_result_header_stays_generic() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"agent_id: agent-0\nagentId: agent-other\n\nDone."}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls[0].tool_name, "Agent");
     }
 
     #[test]
@@ -787,76 +1568,242 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_explicit_agent_id_does_not_fall_back_to_another_child() {
-        let mut metadata = state();
-        metadata["agents"] = json!({
-            "main": { "type": "main", "parentAgentId": null },
-            "agent-0": { "type": "sub", "parentAgentId": "main" },
-            "agent-1": { "type": "sub", "parentAgentId": "main" }
-        });
-        let root = write_bundle(
-            metadata,
+    fn duplicate_explicit_agent_id_links_both_calls_to_one_child() {
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" },
+                "agent-1": { "type": "sub", "parentAgentId": "main" }
+            })),
             &[
                 r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.call","toolCallId":"Agent_1","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
             ],
-        );
-        write_agent_journal(
-            &root,
-            "agent-0",
             &[
-                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
-            ],
-        );
-        write_agent_journal(
-            &root,
-            "agent-1",
-            &[
-                r#"{"type":"turn.prompt","time":1785320000040,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+                (
+                    "agent-0",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
+                (
+                    "agent-1",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000040,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
             ],
         );
 
-        let parsed = KimiCodeParser::new(root.path())
-            .parse_session_dir(&session_dir(&root))
-            .unwrap();
-
-        assert_eq!(parsed.main.subagents.len(), 1);
-        assert_eq!(
-            parsed.main.subagents[0].agent_id.as_deref(),
-            Some("agent-0")
+        assert_eq!(parsed.main.subagents.len(), 2);
+        assert!(parsed.main.subagents.iter().all(|subagent| {
+            subagent.agent_id.as_deref() == Some("agent-0")
+                && subagent.child_session_id.as_deref()
+                    == Some("kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-0")
+        }));
+        assert!(
+            parsed
+                .main
+                .tool_calls
+                .iter()
+                .all(|call| call.tool_name != "Agent")
         );
-        assert!(parsed.main.tool_calls.iter().any(|call| {
-            call.parser_call_id.as_deref() == Some("Agent_1") && call.tool_name == "Agent"
+        assert!(parsed.main.subagents.iter().all(|subagent| {
+            subagent.child_session_id.as_deref()
+                != Some("kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-1")
         }));
     }
 
     #[test]
+    fn resumed_subagent_calls_share_one_child() {
+        let child_journal = |time: i64| {
+            format!(
+                r#"{{"type":"turn.prompt","time":{time},"input":[{{"type":"text","text":"Child"}}],"origin":{{"kind":"user"}}}}"#
+            )
+        };
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" },
+                "agent-1": { "type": "sub", "parentAgentId": "main" }
+            })),
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_15","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_15","result":{"output":"agent_id: agent-0\nactual_subagent_type: explore\nstatus: completed\n\n[summary]\nFirst child finished."}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.call","toolCallId":"Agent_16","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000040,"event":{"type":"tool.result","toolCallId":"Agent_16","result":{"output":"agent_id: agent-1\nactual_subagent_type: explore\nstatus: failed\n\nsubagent error: The subagent stopped.","isError":true}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000050,"event":{"type":"tool.call","toolCallId":"Agent_18","name":"Agent","args":{"resume":"agent-1"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000060,"event":{"type":"tool.result","toolCallId":"Agent_18","result":{"output":"agent_id: agent-1\nactual_subagent_type: explore\nstatus: failed\n\nsubagent error: The subagent stopped.","isError":true}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000070,"event":{"type":"tool.call","toolCallId":"Agent_20","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000080,"event":{"type":"tool.result","toolCallId":"Agent_20","result":{"output":"agent_id: agent-1\nactual_subagent_type: explore\nstatus: completed\n\n[summary]\nResumed child finished."}}}"#,
+            ],
+            &[
+                ("agent-0", &[child_journal(1785320000025).as_str()]),
+                ("agent-1", &[child_journal(1785320000035).as_str()]),
+            ],
+        );
+
+        assert_eq!(parsed.main.subagents.len(), 4);
+        let agent_1_session =
+            "kimi-subagent::session_00000000-0000-4000-8000-000000000001::agent-1";
+        assert_eq!(
+            parsed
+                .main
+                .subagents
+                .iter()
+                .filter(|subagent| subagent.child_session_id.as_deref() == Some(agent_1_session))
+                .count(),
+            3
+        );
+        assert!(parsed.main.subagents.iter().all(|subagent| {
+            subagent.parser_ref.as_deref() != Some("Agent_16")
+                || subagent
+                    .result_summary
+                    .as_deref()
+                    .is_some_and(|summary| summary.starts_with("subagent error:"))
+        }));
+        assert_eq!(
+            parsed
+                .main
+                .subagents
+                .iter()
+                .find(|subagent| subagent.parser_ref.as_deref() == Some("Agent_20"))
+                .and_then(|subagent| subagent.result_summary.as_deref()),
+            Some("Resumed child finished.")
+        );
+    }
+
+    #[test]
+    fn resume_with_conflicting_evidence_stays_generic() {
+        let child: &[&str] = &[
+            r#"{"type":"turn.prompt","time":1785320000050,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+        ];
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" },
+                "agent-1": { "type": "sub", "parentAgentId": "main" }
+            })),
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_conflict","name":"Agent","args":{"resume":"agent-1"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_conflict","result":{"output":"agent_id: agent-0\nstatus: completed\n\nWrong child."}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.call","toolCallId":"Agent_valid","name":"Agent","args":{"resume":"agent-1"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000040,"event":{"type":"tool.result","toolCallId":"Agent_valid","result":{"output":"agent_id: agent-1\nstatus: completed\n\nRight child."}}}"#,
+            ],
+            &[("agent-0", child), ("agent-1", child)],
+        );
+
+        assert_eq!(parsed.main.subagents.len(), 1);
+        assert_eq!(
+            parsed.main.subagents[0].parser_ref.as_deref(),
+            Some("Agent_valid")
+        );
+        assert!(parsed.main.tool_calls.iter().any(|call| {
+            call.parser_call_id.as_deref() == Some("Agent_conflict") && call.tool_name == "Agent"
+        }));
+    }
+
+    #[test]
+    fn agent_name_prefers_profile_then_header_then_args() {
+        let child: &[&str] = &[
+            r#"{"type":"turn.prompt","input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+        ];
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-profile": { "type": "sub", "parentAgentId": "main", "labels": { "profileName": "profile-name" } },
+                "agent-header": { "type": "sub", "parentAgentId": "main" },
+                "agent-args": { "type": "sub", "parentAgentId": "main" }
+            })),
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_profile","name":"Agent","args":{"agent_id":"agent-profile","subagent_type":"args-name"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_profile","result":{"output":"agent_id: agent-profile\nactual_subagent_type: header-name\nstatus: completed\n\nDone."}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.call","toolCallId":"Agent_header","name":"Agent","args":{"agent_id":"agent-header","subagent_type":"args-name"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000040,"event":{"type":"tool.result","toolCallId":"Agent_header","result":{"output":"agent_id: agent-header\nactual_subagent_type: header-name\nstatus: completed\n\nDone."}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000050,"event":{"type":"tool.call","toolCallId":"Agent_args","name":"Agent","args":{"agent_id":"agent-args","subagent_type":"args-name"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000060,"event":{"type":"tool.result","toolCallId":"Agent_args","result":{"output":"agent_id: agent-args\nstatus: completed\n\nDone."}}}"#,
+            ],
+            &[
+                ("agent-profile", child),
+                ("agent-header", child),
+                ("agent-args", child),
+            ],
+        );
+        let names: HashMap<_, _> = parsed
+            .main
+            .subagents
+            .iter()
+            .map(|subagent| {
+                (
+                    subagent.parser_ref.as_deref().unwrap(),
+                    subagent.agent_name.as_deref(),
+                )
+            })
+            .collect();
+
+        assert_eq!(names["Agent_profile"], Some("profile-name"));
+        assert_eq!(names["Agent_header"], Some("header-name"));
+        assert_eq!(names["Agent_args"], Some("args-name"));
+    }
+
+    #[test]
+    fn swarm_children_are_excluded_from_chronological_pairing() {
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-swarm": { "type": "sub", "parentAgentId": "main", "labels": { "swarmItem": "A" } },
+                "agent-ordinary": { "type": "sub", "parentAgentId": "main" }
+            })),
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+            ],
+            &[
+                (
+                    "agent-swarm",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000020,"input":[{"type":"text","text":"Swarm child"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
+                (
+                    "agent-ordinary",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Ordinary child"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
+            ],
+        );
+
+        assert_eq!(parsed.main.subagents.len(), 1);
+        assert_eq!(
+            parsed.main.subagents[0].agent_id.as_deref(),
+            Some("agent-ordinary")
+        );
+    }
+
+    #[test]
     fn conflicting_structured_agent_evidence_remains_generic() {
-        let mut metadata = state();
-        metadata["agents"] = json!({
-            "main": { "type": "main", "parentAgentId": null },
-            "agent-0": { "type": "sub", "parentAgentId": "main" }
-        });
-        let root = write_bundle(
-            metadata,
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" }
+            })),
             &[
                 r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"agent_id":"unknown-agent","output":"done"}}}"#,
             ],
+            &[(
+                "agent-0",
+                &[
+                    r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+                ],
+            )],
         );
-        write_agent_journal(
-            &root,
-            "agent-0",
-            &[
-                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
-            ],
-        );
-
-        let parsed = KimiCodeParser::new(root.path())
-            .parse_session_dir(&session_dir(&root))
-            .unwrap();
 
         assert!(parsed.main.subagents.is_empty());
         assert_eq!(parsed.main.tool_calls[0].tool_name, "Agent");
@@ -864,38 +1811,32 @@ mod tests {
 
     #[test]
     fn conflicting_structured_and_text_agent_evidence_remains_generic() {
-        let mut metadata = state();
-        metadata["agents"] = json!({
-            "main": { "type": "main", "parentAgentId": null },
-            "agent-0": { "type": "sub", "parentAgentId": "main" },
-            "agent-1": { "type": "sub", "parentAgentId": "main" }
-        });
-        let root = write_bundle(
-            metadata,
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" },
+                "agent-1": { "type": "sub", "parentAgentId": "main" }
+            })),
             &[
                 r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0"}}}"#,
                 r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"agent_id: agent-1"}}}"#,
             ],
-        );
-        write_agent_journal(
-            &root,
-            "agent-0",
             &[
-                r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+                (
+                    "agent-0",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000030,"input":[{"type":"text","text":"Child 0"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
+                (
+                    "agent-1",
+                    &[
+                        r#"{"type":"turn.prompt","time":1785320000040,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
+                    ],
+                ),
             ],
         );
-        write_agent_journal(
-            &root,
-            "agent-1",
-            &[
-                r#"{"type":"turn.prompt","time":1785320000040,"input":[{"type":"text","text":"Child 1"}],"origin":{"kind":"user"}}"#,
-            ],
-        );
-
-        let parsed = KimiCodeParser::new(root.path())
-            .parse_session_dir(&session_dir(&root))
-            .unwrap();
 
         assert!(parsed.main.subagents.is_empty());
         assert_eq!(parsed.main.tool_calls[0].tool_name, "Agent");
@@ -950,6 +1891,10 @@ mod tests {
         assert!(parsed.tool_calls.is_empty());
     }
 }
+mod expansion;
+mod swarm;
+mod text;
+
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
@@ -1013,6 +1958,8 @@ struct StateMetadata {
 struct AgentMetadata {
     kind: Option<String>,
     parent_agent_id: Option<String>,
+    profile_name: Option<String>,
+    swarm_item: Option<String>,
 }
 
 #[derive(Debug)]
@@ -1031,12 +1978,37 @@ struct ParsedJournal {
 
 #[derive(Debug, Clone)]
 struct AgentCallCandidate {
+    kind: DelegationKind,
     raw_call_id: String,
     transcript_item_index: i64,
     call_time_ms: Option<i64>,
     args: Option<Value>,
     result: Option<Value>,
     result_text: Option<String>,
+    result_is_error: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DelegationKind {
+    Agent,
+    Swarm,
+}
+
+struct ChildLink<'a> {
+    agent_id: &'a str,
+    session_id: &'a str,
+    first_wire_time_ms: Option<i64>,
+    swarm_item: Option<&'a str>,
+    profile_name: Option<&'a str>,
+}
+
+struct ChildInfo {
+    agent_id: String,
+    parent_id: String,
+    session_id: String,
+    first_wire_time_ms: Option<i64>,
+    swarm_item: Option<String>,
+    profile_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1090,7 +2062,7 @@ struct JournalState {
     pending_models_by_turn_step: HashMap<String, VecDeque<String>>,
     unscoped_models: VecDeque<String>,
     active_model_hint: Option<String>,
-    turn_usage: UsageAccumulator,
+    record_usage: UsageAccumulator,
     step_usage: UsageAccumulator,
     agent_calls: Vec<AgentCallCandidate>,
 }
@@ -1178,7 +2150,7 @@ impl KimiCodeParser {
         let journal_path = session_dir.join("agents/main/wire.jsonl");
         validate_expected_file(&journal_path)?;
         validate_bundle_path(&self.kimi_home, session_dir, &journal_path)?;
-        let scan = scan_journal(&journal_path)?;
+        let scan = scan_journal(&journal_path, false)?;
         let start_time = state
             .created_at
             .or(scan.earliest_time)
@@ -1197,6 +2169,7 @@ impl KimiCodeParser {
             &session_id,
             start_time,
             scan.has_real_turn_prompt,
+            false,
         )?;
         let title = state
             .title
@@ -1246,7 +2219,7 @@ impl KimiCodeParser {
             }
             validate_expected_file(&agent.journal_path)?;
             validate_bundle_path(&self.kimi_home, session_dir, &agent.journal_path)?;
-            let scan = scan_journal(&agent.journal_path)?;
+            let scan = scan_journal(&agent.journal_path, true)?;
             let child_start = scan
                 .earliest_time
                 .or(state.created_at)
@@ -1260,6 +2233,7 @@ impl KimiCodeParser {
                 &child_session_id(&session_id, &agent.id),
                 child_start,
                 scan.has_real_turn_prompt,
+                true,
             ) {
                 Ok(parsed) => parsed,
                 Err(error)
@@ -1310,31 +2284,26 @@ impl KimiCodeParser {
             });
         }
 
-        let child_infos: Vec<_> = children
+        let child_infos: Vec<ChildInfo> = children
             .iter()
             .map(|child| {
-                (
-                    child.agent.id.clone(),
-                    child.agent.parent_id.clone(),
-                    child.parsed.session.id.clone(),
-                    child.first_wire_time_ms,
-                )
+                let metadata = state.agents.get(&child.agent.id);
+                ChildInfo {
+                    agent_id: child.agent.id.clone(),
+                    parent_id: child.agent.parent_id.clone(),
+                    session_id: child.parsed.session.id.clone(),
+                    first_wire_time_ms: child.first_wire_time_ms,
+                    swarm_item: metadata.and_then(|metadata| metadata.swarm_item.clone()),
+                    profile_name: metadata.and_then(|metadata| metadata.profile_name.clone()),
+                }
             })
             .collect();
-        let main_children: Vec<_> = child_infos
-            .iter()
-            .filter(|(_, parent_id, _, _)| parent_id == "main")
-            .map(|(id, _, session_id, time)| (id.as_str(), session_id.as_str(), *time))
-            .collect();
+        let main_children = child_links_for_parent(&child_infos, "main");
         match_agent_calls(&mut parsed, &main_agent_calls, &main_children);
         for child in &mut children {
-            let parent_id = child.agent.id.clone();
+            let parent_id = child.agent.id.as_str();
             let agent_calls = child.agent_calls.clone();
-            let immediate_children: Vec<_> = child_infos
-                .iter()
-                .filter(|(_, child_parent_id, _, _)| child_parent_id == &parent_id)
-                .map(|(id, _, session_id, time)| (id.as_str(), session_id.as_str(), *time))
-                .collect();
+            let immediate_children = child_links_for_parent(&child_infos, parent_id);
             match_agent_calls(&mut child.parsed, &agent_calls, &immediate_children);
         }
         let children: Vec<_> = children.into_iter().map(|child| child.parsed).collect();
@@ -1511,6 +2480,13 @@ fn nonblank(value: Option<&Value>) -> Option<String> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn nonblank_verbatim(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
 }
 
@@ -1730,8 +2706,12 @@ fn agent_evidence(candidate: &AgentCallCandidate) -> AgentEvidence {
             }
         }
     }
-    if let Some(text) = candidate.result_text.as_deref() {
-        for line in text.lines() {
+    if let Some((header, _)) = candidate
+        .result_text
+        .as_deref()
+        .and_then(text::split_agent_result_header)
+    {
+        for line in header.lines() {
             let Some((key, value)) = line.split_once(':') else {
                 continue;
             };
@@ -1748,67 +2728,198 @@ fn agent_evidence(candidate: &AgentCallCandidate) -> AgentEvidence {
     evidence
 }
 
+fn child_links_for_parent<'a>(child_infos: &'a [ChildInfo], parent_id: &str) -> Vec<ChildLink<'a>> {
+    child_infos
+        .iter()
+        .filter(|info| info.parent_id == parent_id)
+        .map(|info| ChildLink {
+            agent_id: info.agent_id.as_str(),
+            session_id: info.session_id.as_str(),
+            first_wire_time_ms: info.first_wire_time_ms,
+            swarm_item: info.swarm_item.as_deref(),
+            profile_name: info.profile_name.as_deref(),
+        })
+        .collect()
+}
+
 fn match_agent_calls(
     parent: &mut ParsedSession,
     candidates: &[AgentCallCandidate],
-    children: &[(&str, &str, Option<i64>)],
+    children: &[ChildLink<'_>],
 ) {
+    let swarm_children: Vec<_> = children
+        .iter()
+        .map(|child| swarm::SwarmChild {
+            agent_id: child.agent_id,
+            swarm_item: child.swarm_item,
+            first_wire_time_ms: child.first_wire_time_ms,
+        })
+        .collect();
+    let mut swarm_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| candidate.kind == DelegationKind::Swarm)
+        .filter_map(|candidate| {
+            // Only absence permits result-order resolution. An invalid present
+            // list must retain its generic call, even with an otherwise valid result.
+            let items = match candidate.args.as_ref().and_then(|args| args.get("items")) {
+                None => None,
+                Some(items) => Some(
+                    items
+                        .as_array()?
+                        .iter()
+                        .map(|item| item.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+            };
+            Some((candidate, items))
+        })
+        .collect();
+    swarm_candidates.sort_by_key(|(candidate, _)| candidate.transcript_item_index);
+    let mut taken = HashSet::new();
+    let mut consumed_at = HashMap::new();
+    let mut expansions = Vec::new();
+    let mut removed_tool_ids = HashSet::new();
+    let swarm_calls: Vec<_> = swarm_candidates
+        .iter()
+        .map(|(candidate, items)| swarm::SwarmCall {
+            items: items.as_deref(),
+            call_time_ms: candidate.call_time_ms,
+            result_output: candidate.result_text.as_deref(),
+            result_is_error: candidate.result_is_error,
+        })
+        .collect();
+    let resolved_swarms = swarm::resolve_swarms(&swarm_calls, &swarm_children);
+    for ((candidate, _), members) in swarm_candidates.into_iter().zip(resolved_swarms) {
+        let Some(members) = members.filter(|members| !members.is_empty()) else {
+            continue;
+        };
+        let args = candidate.args.as_ref();
+        let template = args
+            .and_then(|args| args.get("prompt_template"))
+            .and_then(Value::as_str);
+        let mut subagent_ids = Vec::with_capacity(members.len());
+        for member in members {
+            // Resolution only returns children from this parent's child list.
+            let Some(child) = children
+                .iter()
+                .find(|child| child.agent_id == member.agent_id)
+            else {
+                continue;
+            };
+            let id = format!(
+                "kimi-agent-call::{}::{}::{}",
+                parent.session.id, candidate.raw_call_id, member.agent_id
+            );
+            subagent_ids.push(id.clone());
+            taken.insert(member.agent_id.clone());
+            consumed_at.insert(member.agent_id.clone(), candidate.transcript_item_index);
+            parent.subagents.push(Subagent {
+                id,
+                agent_id: Some(member.agent_id.clone()),
+                agent_name: child.profile_name.map(str::to_string).or_else(|| {
+                    args.and_then(|args| args.get("subagent_type"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                }),
+                session_id: parent.session.id.clone(),
+                title: member.item.clone().unwrap_or(member.agent_id),
+                prompt: template
+                    .zip(member.item.as_deref())
+                    .map(|(template, item)| template.replace("{{item}}", item)),
+                result_summary: member.summary,
+                child_session_id: Some(child.session_id.to_string()),
+                parser_ref: Some(candidate.raw_call_id.clone()),
+            });
+        }
+        expansions.push(expansion::Expansion {
+            item_index: candidate.transcript_item_index,
+            subagent_ids,
+        });
+        removed_tool_ids.insert(format!(
+            "kimi-tool::{}::{}",
+            parent.session.id, candidate.raw_call_id
+        ));
+    }
     let mut matched = HashMap::new();
-    let mut used_children = HashSet::new();
+    let mut matched_children = taken;
     let evidence: HashMap<_, _> = candidates
         .iter()
         .map(|candidate| (candidate.raw_call_id.as_str(), agent_evidence(candidate)))
         .collect();
     for candidate in candidates {
-        if let AgentEvidence::Valid(id) = &evidence[candidate.raw_call_id.as_str()]
-            && children.iter().any(|(child_id, _, _)| *child_id == id)
-            && used_children.insert(id.clone())
+        if candidate.kind == DelegationKind::Agent
+            && let AgentEvidence::Valid(id) = &evidence[candidate.raw_call_id.as_str()]
+            && children.iter().any(|child| child.agent_id == id)
+            && consumed_at.get(id).is_none_or(|swarm_index| {
+                candidate.transcript_item_index > *swarm_index
+                    && candidate
+                        .args
+                        .as_ref()
+                        .and_then(|args| args.get("resume"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|resume| resume.trim() == id)
+            })
         {
             matched.insert(candidate.raw_call_id.clone(), id.clone());
+            matched_children.insert(id.clone());
         }
     }
+    // Unmatched explicit/invalid evidence and unresolved swarms can own the
+    // remaining children too; excluding them from the count would invent links.
+    let has_competing_owner = candidates.iter().any(|candidate| match candidate.kind {
+        DelegationKind::Agent => {
+            !matched.contains_key(&candidate.raw_call_id)
+                && evidence[candidate.raw_call_id.as_str()] != AgentEvidence::Absent
+        }
+        DelegationKind::Swarm => !removed_tool_ids.contains(&format!(
+            "kimi-tool::{}::{}",
+            parent.session.id, candidate.raw_call_id
+        )),
+    });
     let remaining_calls: Vec<_> = candidates
         .iter()
         .filter(|candidate| {
-            !matched.contains_key(&candidate.raw_call_id)
+            candidate.kind == DelegationKind::Agent
+                && !matched.contains_key(&candidate.raw_call_id)
                 && evidence[candidate.raw_call_id.as_str()] == AgentEvidence::Absent
         })
         .collect();
     let mut remaining_children: Vec<_> = children
         .iter()
-        .filter(|(id, _, _)| !used_children.contains(*id))
-        .copied()
+        .filter(|child| !matched_children.contains(child.agent_id) && child.swarm_item.is_none())
         .collect();
-    if remaining_calls.len() == remaining_children.len()
+    if !has_competing_owner
+        && remaining_calls.len() == remaining_children.len()
         && remaining_calls
             .iter()
             .all(|candidate| candidate.call_time_ms.is_some())
-        && remaining_children.iter().all(|(_, _, time)| time.is_some())
+        && remaining_children
+            .iter()
+            .all(|child| child.first_wire_time_ms.is_some())
     {
         let mut ordered_calls = remaining_calls;
         ordered_calls
             .sort_by_key(|candidate| (candidate.call_time_ms, candidate.raw_call_id.as_str()));
-        remaining_children.sort_by_key(|(id, _, time)| (*time, *id));
+        remaining_children.sort_by_key(|child| (child.first_wire_time_ms, child.agent_id));
         if ordered_calls
             .iter()
             .zip(&remaining_children)
-            .all(|(candidate, (_, _, child_time))| {
-                child_time.expect("verified") >= candidate.call_time_ms.expect("verified")
+            .all(|(candidate, child)| {
+                child.first_wire_time_ms.expect("verified")
+                    >= candidate.call_time_ms.expect("verified")
             })
         {
-            for (candidate, (agent_id, _, _)) in ordered_calls.into_iter().zip(remaining_children) {
-                matched.insert(candidate.raw_call_id.clone(), agent_id.to_string());
+            for (candidate, child) in ordered_calls.into_iter().zip(remaining_children) {
+                matched.insert(candidate.raw_call_id.clone(), child.agent_id.to_string());
             }
         }
     }
 
-    let mut removed_tool_ids = HashSet::new();
     for candidate in candidates {
         let Some(agent_id) = matched.get(&candidate.raw_call_id) else {
             continue;
         };
-        let Some((_, child_session_id, _)) = children.iter().find(|(id, _, _)| *id == agent_id)
-        else {
+        let Some(child) = children.iter().find(|child| child.agent_id == agent_id) else {
             continue;
         };
         let subagent_id = format!(
@@ -1827,12 +2938,25 @@ fn match_agent_calls(
         parent.subagents.push(Subagent {
             id: subagent_id,
             agent_id: Some(agent_id.clone()),
-            agent_name: candidate
-                .args
-                .as_ref()
-                .and_then(|value| value.get("subagent_type"))
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            agent_name: child
+                .profile_name
+                .map(str::to_string)
+                .or_else(|| {
+                    candidate
+                        .result_text
+                        .as_deref()
+                        .and_then(|text| text::split_agent_result(text).actual_subagent_type)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    candidate
+                        .args
+                        .as_ref()
+                        .and_then(|value| value.get("subagent_type"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                }),
             session_id: parent.session.id.clone(),
             title: agent_id.clone(),
             prompt: candidate
@@ -1841,8 +2965,13 @@ fn match_agent_calls(
                 .and_then(|value| value.get("prompt"))
                 .and_then(Value::as_str)
                 .map(str::to_string),
-            result_summary: candidate.result_text.clone(),
-            child_session_id: Some((*child_session_id).to_string()),
+            result_summary: candidate
+                .result_text
+                .as_deref()
+                .map(|text| text::split_agent_result(text).summary)
+                .filter(|summary| !summary.is_empty())
+                .map(str::to_string),
+            child_session_id: Some(child.session_id.to_string()),
             parser_ref: Some(candidate.raw_call_id.clone()),
         });
         removed_tool_ids.insert(format!(
@@ -1853,6 +2982,7 @@ fn match_agent_calls(
     parent
         .tool_calls
         .retain(|call| !removed_tool_ids.contains(&call.id));
+    expansion::expand_transcript(parent, expansions);
 }
 
 fn load_state(path: &Path) -> Result<StateMetadata> {
@@ -1879,7 +3009,24 @@ fn load_state(path: &Path) -> Result<StateMetadata> {
                 agent_id.clone(),
                 AgentMetadata {
                     kind: nonblank(agent.get("type")),
-                    parent_agent_id: nonblank(agent.get("parentAgentId")),
+                    parent_agent_id: nonblank(agent.get("parentAgentId")).or_else(|| {
+                        nonblank(
+                            agent
+                                .get("labels")
+                                .and_then(|labels| labels.get("parentAgentId")),
+                        )
+                    }),
+                    profile_name: nonblank(
+                        agent
+                            .get("labels")
+                            .and_then(|labels| labels.get("profileName")),
+                    ),
+                    swarm_item: nonblank_verbatim(
+                        agent
+                            .get("labels")
+                            .and_then(|labels| labels.get("swarmItem")),
+                    )
+                    .or_else(|| nonblank_verbatim(agent.get("swarmItem"))),
                 },
             );
         }
@@ -1887,7 +3034,7 @@ fn load_state(path: &Path) -> Result<StateMetadata> {
     Ok(state)
 }
 
-fn scan_journal(path: &Path) -> Result<JournalScan> {
+fn scan_journal(path: &Path, is_child: bool) -> Result<JournalScan> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let mut scan = JournalScan {
         has_real_turn_prompt: false,
@@ -1904,7 +3051,7 @@ fn scan_journal(path: &Path) -> Result<JournalScan> {
             scan.earliest_time = Some(scan.earliest_time.map_or(time, |current| current.min(time)));
             scan.latest_time = Some(scan.latest_time.map_or(time, |current| current.max(time)));
         }
-        scan.has_real_turn_prompt |= is_real_turn_prompt(&value);
+        scan.has_real_turn_prompt |= is_real_turn_prompt(&value, is_child);
     }
     Ok(scan)
 }
@@ -1914,6 +3061,7 @@ fn parse_journal(
     session_id: &str,
     start_time: DateTime<Utc>,
     has_real_turn_prompt: bool,
+    is_child: bool,
 ) -> Result<ParsedJournal> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let mut messages = Vec::new();
@@ -1963,15 +3111,20 @@ fn parse_journal(
             Some("config.update") => {
                 state.active_model_hint = normalized_model(value.get("modelAlias"))
             }
-            Some("usage.record")
-                if value.get("usageScope").and_then(Value::as_str) == Some("turn") =>
-            {
+            Some("usage.record") => {
                 if let Some(usage) = parse_usage(value.get("usage")) {
-                    state.turn_usage.add(usage);
+                    state.record_usage.add(usage);
                 }
             }
-            Some("turn.prompt") if has_real_turn_prompt && is_real_turn_prompt(&value) => {
+            Some("turn.prompt")
+                if has_real_turn_prompt && is_real_turn_prompt(&value, is_child) =>
+            {
                 if let Some(content) = normalize_content_parts(value.get("input"), true) {
+                    let content = if is_child {
+                        text::strip_git_context(&content).to_string()
+                    } else {
+                        content
+                    };
                     push_message(
                         &mut messages,
                         &mut transcript_items,
@@ -2070,8 +3223,13 @@ fn parse_journal(
                             event.get("args"),
                             wire_time.map(|(millis, _)| millis),
                         );
-                        if name == "Agent" {
+                        if matches!(name.as_str(), "Agent" | "AgentSwarm") {
                             state.agent_calls.push(AgentCallCandidate {
+                                kind: if name == "AgentSwarm" {
+                                    DelegationKind::Swarm
+                                } else {
+                                    DelegationKind::Agent
+                                },
                                 raw_call_id: raw_id.clone(),
                                 transcript_item_index: transcript_items
                                     .last()
@@ -2081,6 +3239,7 @@ fn parse_journal(
                                 args: event.get("args").cloned(),
                                 result: None,
                                 result_text: None,
+                                result_is_error: false,
                             });
                         }
                         if let Some((millis, _)) = wire_time {
@@ -2127,6 +3286,10 @@ fn parse_journal(
                             .find(|candidate| candidate.raw_call_id == raw_id)
                         {
                             candidate.result = result.cloned();
+                            candidate.result_is_error = result
+                                .and_then(|result| result.get("isError"))
+                                .and_then(Value::as_bool)
+                                == Some(true);
                             candidate.result_text = normalize_tool_output(
                                 result.and_then(|result| result.get("output")),
                             );
@@ -2196,8 +3359,8 @@ fn parse_journal(
             subagents: Vec::new(),
             transcript_items,
             reasoning_attachments,
-            token_usage: if state.turn_usage.seen {
-                state.turn_usage.into_token_usage()
+            token_usage: if state.record_usage.seen {
+                state.record_usage.into_token_usage()
             } else {
                 state.step_usage.into_token_usage()
             },
@@ -2209,13 +3372,17 @@ fn parse_journal(
     })
 }
 
-fn is_real_turn_prompt(value: &Value) -> bool {
+fn is_real_turn_prompt(value: &Value, is_child: bool) -> bool {
+    let Some(origin) = value.get("origin") else {
+        return false;
+    };
+    let origin_kind = origin.get("kind").and_then(Value::as_str);
+    let has_accepted_origin = origin_kind == Some("user")
+        || (is_child
+            && origin_kind == Some("system_trigger")
+            && origin.get("name").and_then(Value::as_str) == Some("subagent"));
     value.get("type").and_then(Value::as_str) == Some("turn.prompt")
-        && value
-            .get("origin")
-            .and_then(|origin| origin.get("kind"))
-            .and_then(Value::as_str)
-            == Some("user")
+        && has_accepted_origin
         && normalize_content_parts(value.get("input"), true).is_some()
 }
 

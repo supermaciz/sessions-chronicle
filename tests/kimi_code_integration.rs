@@ -10,6 +10,8 @@ use sessions_chronicle::session_sources::SessionSources;
 use tempfile::TempDir;
 
 const PRIMARY_ID: &str = "session_00000000-0000-4000-8000-000000000001";
+const SWARM_ID: &str = "session_00000000-0000-4000-8000-000000000009";
+const RESUME_ID: &str = "session_00000000-0000-4000-8000-000000000010";
 
 fn copy_dir(source: &Path, destination: &Path) {
     fs::create_dir_all(destination).unwrap();
@@ -42,8 +44,8 @@ fn primary_dir(home: &Path) -> PathBuf {
         .join(PRIMARY_ID)
 }
 
-fn child_id(agent_id: &str) -> String {
-    format!("kimi-subagent::{PRIMARY_ID}::{agent_id}")
+fn child_id(session_id: &str, agent_id: &str) -> String {
+    format!("kimi-subagent::{session_id}::{agent_id}")
 }
 
 fn fallback_session_dir(home: &Path, metadata_name: &str) -> PathBuf {
@@ -99,12 +101,16 @@ struct BundleSnapshot {
     fingerprints: BTreeMap<String, (i64, i64)>,
 }
 
-fn bundle_snapshot(connection: &rusqlite::Connection, session_dir: &Path) -> BundleSnapshot {
-    let child_pattern = format!("kimi-subagent::{PRIMARY_ID}::%");
+fn bundle_snapshot(
+    connection: &rusqlite::Connection,
+    session_dir: &Path,
+    session_id: &str,
+) -> BundleSnapshot {
+    let child_pattern = format!("kimi-subagent::{session_id}::%");
     let session_project_ids = connection
         .prepare("SELECT id, project_id FROM sessions WHERE id = ?1 OR id LIKE ?2 ORDER BY id")
         .unwrap()
-        .query_map(rusqlite::params![PRIMARY_ID, &child_pattern], |row| {
+        .query_map(rusqlite::params![session_id, &child_pattern], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
         .unwrap()
@@ -113,7 +119,7 @@ fn bundle_snapshot(connection: &rusqlite::Connection, session_dir: &Path) -> Bun
     let session_pins = connection
         .prepare("SELECT id, pinned_at FROM sessions WHERE id = ?1 OR id LIKE ?2 ORDER BY id")
         .unwrap()
-        .query_map(rusqlite::params![PRIMARY_ID, &child_pattern], |row| {
+        .query_map(rusqlite::params![session_id, &child_pattern], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
         .unwrap()
@@ -126,7 +132,7 @@ fn bundle_snapshot(connection: &rusqlite::Connection, session_dir: &Path) -> Bun
              ORDER BY session_id, message_index",
         )
         .unwrap()
-        .query_map(rusqlite::params![PRIMARY_ID, &child_pattern], |row| {
+        .query_map(rusqlite::params![session_id, &child_pattern], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
@@ -146,7 +152,7 @@ fn bundle_snapshot(connection: &rusqlite::Connection, session_dir: &Path) -> Bun
              ORDER BY session_id, item_index",
         )
         .unwrap()
-        .query_map(rusqlite::params![PRIMARY_ID, &child_pattern], |row| {
+        .query_map(rusqlite::params![session_id, &child_pattern], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
@@ -165,7 +171,7 @@ fn bundle_snapshot(connection: &rusqlite::Connection, session_dir: &Path) -> Bun
              WHERE session_id = ?1 OR session_id LIKE ?2 ORDER BY session_id, id",
         )
         .unwrap()
-        .query_map(rusqlite::params![PRIMARY_ID, &child_pattern], |row| {
+        .query_map(rusqlite::params![session_id, &child_pattern], |row| {
             Ok(((row.get(0)?, row.get(1)?), row.get(2)?))
         })
         .unwrap()
@@ -192,7 +198,7 @@ fn bundle_snapshot(connection: &rusqlite::Connection, session_dir: &Path) -> Bun
         main_prompt: connection
             .query_row(
                 "SELECT first_prompt FROM sessions WHERE id = ?1",
-                [PRIMARY_ID],
+                [session_id],
                 |row| row.get(0),
             )
             .unwrap(),
@@ -309,7 +315,7 @@ fn indexes_every_kimi_bundle_and_persists_their_children() {
     let database = tempfile::NamedTempFile::new().unwrap();
     let mut indexer = SessionIndexer::new(database.path()).unwrap();
 
-    assert_eq!(indexer.index_kimi_sessions(&home).unwrap(), 7);
+    assert_eq!(indexer.index_kimi_sessions(&home).unwrap(), 9);
 
     let connection = rusqlite::Connection::open(database.path()).unwrap();
     let sessions: i64 = connection
@@ -327,8 +333,213 @@ fn indexes_every_kimi_bundle_and_persists_their_children() {
         )
         .unwrap();
 
-    assert_eq!(sessions, 10);
-    assert_eq!(children, 3);
+    assert_eq!(sessions, 16);
+    assert_eq!(children, 7);
+}
+
+#[test]
+fn swarm_fixture_persists_one_subagent_item_per_child() {
+    let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kimi_home");
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    indexer.index_kimi_sessions(&home).unwrap();
+
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let transcript = connection
+        .prepare(
+            "SELECT kind, subagent_id FROM transcript_items WHERE session_id = ?1 ORDER BY item_index",
+        )
+        .unwrap()
+        .query_map([SWARM_ID], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        transcript
+            .iter()
+            .map(|(kind, _)| kind.as_str())
+            .collect::<Vec<_>>(),
+        ["message", "message", "subagent", "subagent", "message"]
+    );
+    assert!(transcript[2].1.is_some());
+    assert!(transcript[3].1.is_some());
+
+    let child_sessions = connection
+        .prepare("SELECT child_session_id FROM subagents WHERE session_id = ?1 ORDER BY id")
+        .unwrap()
+        .query_map([SWARM_ID], |row| row.get::<_, Option<String>>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        child_sessions,
+        [
+            Some(child_id(SWARM_ID, "agent-0")),
+            Some(child_id(SWARM_ID, "agent-1")),
+        ]
+    );
+}
+
+#[test]
+fn resume_fixture_links_three_calls_to_one_child() {
+    let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kimi_home");
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    indexer.index_kimi_sessions(&home).unwrap();
+
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let linked_calls: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM subagents WHERE child_session_id = ?1",
+            [child_id(RESUME_ID, "agent-1")],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(linked_calls, 3);
+}
+
+#[test]
+fn primary_child_title_omits_git_context() {
+    let home = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/kimi_home");
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    indexer.index_kimi_sessions(&home).unwrap();
+
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let title: String = connection
+        .query_row(
+            "SELECT first_prompt FROM sessions WHERE id = ?1",
+            [child_id(PRIMARY_ID, "agent-0")],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(title, "Inspect child parser");
+}
+
+#[test]
+fn reindexing_kimi_fixtures_is_stable() {
+    let home = copied_home();
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    let primary = primary_dir(home.path());
+    let swarm = home
+        .path()
+        .join("sessions/wd_swarm_999999999999")
+        .join(SWARM_ID);
+    let resume = home
+        .path()
+        .join("sessions/wd_resume_101010101010")
+        .join(RESUME_ID);
+
+    indexer.index_kimi_sessions(home.path()).unwrap();
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let primary_before = bundle_snapshot(&connection, &primary, PRIMARY_ID);
+    let swarm_before = bundle_snapshot(&connection, &swarm, SWARM_ID);
+    let resume_before = bundle_snapshot(&connection, &resume, RESUME_ID);
+
+    indexer.index_kimi_sessions(home.path()).unwrap();
+
+    assert_eq!(
+        bundle_snapshot(&connection, &primary, PRIMARY_ID),
+        primary_before
+    );
+    assert_eq!(bundle_snapshot(&connection, &swarm, SWARM_ID), swarm_before);
+    assert_eq!(
+        bundle_snapshot(&connection, &resume, RESUME_ID),
+        resume_before
+    );
+}
+
+#[test]
+fn v21_upgrade_incrementally_restores_kimi_children_and_links() {
+    let home = copied_home();
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let primary = primary_dir(home.path());
+    let sources = all_sources(home.path());
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    indexer.index_all_incremental(&sources).unwrap();
+    drop(indexer);
+
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let expected = bundle_snapshot(&connection, &primary, PRIMARY_ID);
+    assert_eq!(expected.session_project_ids.len(), 4);
+    assert_eq!(expected.subagent_links.len(), 2);
+    assert!(!expected.fingerprints.is_empty());
+
+    // Model v21's already-indexed main transcript with generic Agent calls,
+    // omitted child sessions/links, and still-current bundle fingerprints.
+    connection
+        .execute(
+            "INSERT INTO tool_calls (id, session_id, tool_name, status, parser_call_id)
+             SELECT 'kimi-tool::' || session_id || '::' || parser_ref,
+                    session_id, 'Agent', 'completed', parser_ref
+             FROM subagents WHERE session_id = ?1",
+            [PRIMARY_ID],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE transcript_items SET kind = 'tool_call',
+                 tool_call_id = (SELECT 'kimi-tool::' || s.session_id || '::' || s.parser_ref
+                                 FROM subagents s WHERE s.session_id = ?1 AND s.id = subagent_id),
+                 subagent_id = NULL
+             WHERE session_id = ?1 AND kind = 'subagent'",
+            [PRIMARY_ID],
+        )
+        .unwrap();
+    let child_pattern = format!("kimi-subagent::{PRIMARY_ID}::%");
+    for table in [
+        "messages",
+        "transcript_items",
+        "reasoning_attachments",
+        "context_entries",
+        "tool_calls",
+        "subagents",
+    ] {
+        connection
+            .execute(
+                &format!("DELETE FROM {table} WHERE session_id LIKE ?1"),
+                [&child_pattern],
+            )
+            .unwrap();
+    }
+    connection
+        .execute("DELETE FROM subagents WHERE session_id = ?1", [PRIMARY_ID])
+        .unwrap();
+    connection
+        .execute("DELETE FROM sessions WHERE id LIKE ?1", [&child_pattern])
+        .unwrap();
+    connection
+        .execute_batch("PRAGMA user_version = 21")
+        .unwrap();
+    let old = bundle_snapshot(&connection, &primary, PRIMARY_ID);
+    assert_eq!(old.session_project_ids.len(), 1);
+    assert!(old.subagent_links.is_empty());
+    assert_eq!(old.fingerprints, expected.fingerprints);
+
+    // Normal construction must migrate before an ordinary incremental run.
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        22
+    );
+    let result = indexer.index_all_incremental(&sources).unwrap();
+    assert_eq!(result.per_source[4].errors, 0);
+    let restored = bundle_snapshot(&connection, &primary, PRIMARY_ID);
+    assert_eq!(restored.session_project_ids.len(), 4);
+    assert_eq!(restored.subagent_links.len(), 2);
+    assert_eq!(
+        restored.subagent_links[&(
+            PRIMARY_ID.to_string(),
+            format!("kimi-agent-call::{PRIMARY_ID}::Agent_0")
+        )],
+        Some(child_id(PRIMARY_ID, "agent-0"))
+    );
+    assert_eq!(restored, expected);
 }
 
 #[test]
@@ -354,14 +565,17 @@ fn declared_child_addition_and_removal_replace_the_bundle_children() {
     )
     .unwrap();
 
-    assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 7);
+    assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 9);
     let connection = rusqlite::Connection::open(database.path()).unwrap();
-    assert!(session_exists(&connection, &child_id("agent-new")));
+    assert!(session_exists(
+        &connection,
+        &child_id(PRIMARY_ID, "agent-new")
+    ));
     assert_eq!(
         connection
             .query_row(
                 "SELECT parent_session_id FROM sessions WHERE id = ?1",
-                [child_id("agent-new")],
+                [child_id(PRIMARY_ID, "agent-new")],
                 |row| row.get::<_, String>(0),
             )
             .unwrap(),
@@ -376,9 +590,15 @@ fn declared_child_addition_and_removal_replace_the_bundle_children() {
     )
     .unwrap();
 
-    assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 7);
-    assert!(!session_exists(&connection, &child_id("agent-1")));
-    assert!(session_exists(&connection, &child_id("agent-new")));
+    assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 9);
+    assert!(!session_exists(
+        &connection,
+        &child_id(PRIMARY_ID, "agent-1")
+    ));
+    assert!(session_exists(
+        &connection,
+        &child_id(PRIMARY_ID, "agent-new")
+    ));
 }
 
 #[test]
@@ -391,7 +611,7 @@ fn missing_declared_child_journal_preserves_bundle_and_reports_a_diagnostic() {
 
     indexer.index_all_incremental(&sources).unwrap();
     let connection = rusqlite::Connection::open(database.path()).unwrap();
-    let before = bundle_snapshot(&connection, &primary);
+    let before = bundle_snapshot(&connection, &primary, PRIMARY_ID);
     fs::remove_file(primary.join("agents/agent-0/wire.jsonl")).unwrap();
 
     let result = indexer.index_all_incremental(&sources).unwrap();
@@ -399,7 +619,7 @@ fn missing_declared_child_journal_preserves_bundle_and_reports_a_diagnostic() {
     assert_eq!(result.per_source[4].errors, 1);
     assert_eq!(result.errors_detail.len(), 1);
     assert!(result.errors_detail[0].message.contains("No such file"));
-    assert_eq!(bundle_snapshot(&connection, &primary), before);
+    assert_eq!(bundle_snapshot(&connection, &primary, PRIMARY_ID), before);
 }
 
 #[test]
@@ -412,7 +632,7 @@ fn invalid_utf8_after_valid_records_preserves_bundle_and_reports_one_diagnostic(
 
     indexer.index_all_incremental(&sources).unwrap();
     let connection = rusqlite::Connection::open(database.path()).unwrap();
-    let before = bundle_snapshot(&connection, &primary);
+    let before = bundle_snapshot(&connection, &primary, PRIMARY_ID);
     fs::OpenOptions::new()
         .append(true)
         .open(primary.join("agents/main/wire.jsonl"))
@@ -424,7 +644,7 @@ fn invalid_utf8_after_valid_records_preserves_bundle_and_reports_one_diagnostic(
 
     assert_eq!(result.per_source[4].errors, 1);
     assert_eq!(result.errors_detail.len(), 1);
-    assert_eq!(bundle_snapshot(&connection, &primary), before);
+    assert_eq!(bundle_snapshot(&connection, &primary, PRIMARY_ID), before);
 }
 
 #[test]
@@ -447,7 +667,10 @@ fn injection_only_bundle_prunes_sessions_contents_links_and_fingerprints() {
     assert_eq!(result.per_source[4].removed, 4);
     let connection = rusqlite::Connection::open(database.path()).unwrap();
     assert!(!session_exists(&connection, PRIMARY_ID));
-    assert!(!session_exists(&connection, &child_id("agent-0")));
+    assert!(!session_exists(
+        &connection,
+        &child_id(PRIMARY_ID, "agent-0")
+    ));
     assert_eq!(
         connection
             .query_row(
@@ -512,9 +735,12 @@ fn source_root_pruning_does_not_delete_bundles_from_another_kimi_home() {
         .unwrap();
     fs::remove_dir_all(primary_dir(&home_a)).unwrap();
 
-    assert_eq!(indexer.index_kimi_sessions(&home_a).unwrap(), 6);
+    assert_eq!(indexer.index_kimi_sessions(&home_a).unwrap(), 8);
     assert!(!session_exists(&connection, PRIMARY_ID));
-    assert!(!session_exists(&connection, &child_id("agent-0")));
+    assert!(!session_exists(
+        &connection,
+        &child_id(PRIMARY_ID, "agent-0")
+    ));
     assert!(session_exists(&connection, second_id));
     assert!(session_exists(
         &connection,
@@ -535,9 +761,9 @@ fn equal_raw_child_ids_in_distinct_mains_are_namespaced() {
     let database = tempfile::NamedTempFile::new().unwrap();
     let mut indexer = SessionIndexer::new(database.path()).unwrap();
 
-    assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 8);
+    assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 10);
     let connection = rusqlite::Connection::open(database.path()).unwrap();
-    let first = child_id("agent-0");
+    let first = child_id(PRIMARY_ID, "agent-0");
     let second = format!("kimi-subagent::{second_id}::agent-0");
     assert!(session_exists(&connection, &first));
     assert!(session_exists(&connection, &second));
@@ -568,13 +794,13 @@ fn failed_bundle_replacement_rolls_back_all_existing_bundle_data() {
             [PRIMARY_ID],
         )
         .unwrap();
-    let before = bundle_snapshot(&connection, &primary);
+    let before = bundle_snapshot(&connection, &primary, PRIMARY_ID);
     connection
         .execute(
             &format!(
                 "CREATE TRIGGER abort_kimi_child BEFORE INSERT ON messages \
                  WHEN NEW.session_id = '{}' BEGIN SELECT RAISE(ABORT, 'test rollback'); END",
-                child_id("agent-0")
+                child_id(PRIMARY_ID, "agent-0")
             ),
             [],
         )
@@ -585,8 +811,8 @@ fn failed_bundle_replacement_rolls_back_all_existing_bundle_data() {
         .replace("Inspect parser safety", "Replacement prompt must roll back");
     fs::write(main_journal, journal).unwrap();
 
-    assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 6);
-    assert_eq!(bundle_snapshot(&connection, &primary), before);
+    assert_eq!(indexer.index_kimi_sessions(home.path()).unwrap(), 8);
+    assert_eq!(bundle_snapshot(&connection, &primary, PRIMARY_ID), before);
 }
 
 #[cfg(unix)]
@@ -620,7 +846,7 @@ fn assert_optional_metadata_fifo_does_not_block(metadata_name: &str) {
         .recv_timeout(Duration::from_secs(2))
         .unwrap_or_else(|_| panic!("Kimi indexing blocked while opening {metadata_name}"));
     assert_eq!(parsed.unwrap().main.session.id, PRIMARY_ID);
-    assert_eq!(indexed.unwrap(), 7);
+    assert_eq!(indexed.unwrap(), 9);
 }
 
 #[cfg(unix)]
@@ -668,7 +894,7 @@ fn symlinked_optional_metadata_is_ignored_without_blocking_discovery() {
                 .unwrap()
                 .index_kimi_sessions(home.path())
                 .unwrap(),
-            7
+            9
         );
     }
 }
@@ -693,7 +919,7 @@ fn directory_optional_metadata_is_ignored_without_blocking_discovery() {
                 .unwrap()
                 .index_kimi_sessions(home.path())
                 .unwrap(),
-            7
+            9
         );
     }
 }
@@ -751,7 +977,7 @@ fn declared_child_fifo_is_diagnosed_without_blocking_and_preserves_bundle() {
     let mut indexer = SessionIndexer::new(database.path()).unwrap();
     indexer.index_kimi_sessions(home.path()).unwrap();
     let connection = rusqlite::Connection::open(database.path()).unwrap();
-    let before = bundle_snapshot(&connection, &primary);
+    let before = bundle_snapshot(&connection, &primary, PRIMARY_ID);
     fs::remove_file(&child_journal).unwrap();
     assert!(
         Command::new("mkfifo")
@@ -781,5 +1007,5 @@ fn declared_child_fifo_is_diagnosed_without_blocking_and_preserves_bundle() {
         result.errors_detail[0].location.as_deref(),
         child_journal.to_str()
     );
-    assert_eq!(bundle_snapshot(&connection, &primary), before);
+    assert_eq!(bundle_snapshot(&connection, &primary, PRIMARY_ID), before);
 }

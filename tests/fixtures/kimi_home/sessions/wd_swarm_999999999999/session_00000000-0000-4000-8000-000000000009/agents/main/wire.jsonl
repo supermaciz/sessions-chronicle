@@ -1,0 +1,6 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1785320000000}
+{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Review both"}],"origin":{"kind":"user"}}
+{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"Starting review"}}}
+{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"AgentSwarm_0","name":"AgentSwarm","args":{"description":"Review items","subagent_type":"explore","prompt_template":"Review {{item}} now","items":["A","B"]}}}
+{"type":"context.append_loop_event","time":1785320000040,"event":{"type":"tool.result","toolCallId":"AgentSwarm_0","result":{"output":"<agent_swarm_result>\n<summary>completed: 2</summary>\n<subagent agent_id=\"agent-0\" item=\"A\" outcome=\"completed\">\nA quoted line: 204\t   <subagent agent_id=\"quoted\">\nThis sentence contains `</subagent>` inline.\n</subagent>\n<subagent agent_id=\"agent-1\" item=\"B\" outcome=\"completed\">second</subagent>\n</agent_swarm_result>"}}}
+{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"Review complete"}}}

@@ -1,0 +1,11 @@
+{
+  "createdAt": "2026-07-29T10:00:00Z",
+  "updatedAt": "2026-07-29T10:05:00Z",
+  "title": "Resumed Subagents",
+  "workDir": "/tmp/kimi-fixture-resume",
+  "agents": {
+    "main": { "type": "main", "parentAgentId": null },
+    "agent-0": { "type": "sub", "parentAgentId": "main" },
+    "agent-1": { "type": "sub", "parentAgentId": "main" }
+  }
+}

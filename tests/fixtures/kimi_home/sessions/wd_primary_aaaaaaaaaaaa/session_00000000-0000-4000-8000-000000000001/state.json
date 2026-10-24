@@ -5,7 +5,11 @@
   "workDir": "/tmp/kimi-fixture-primary",
   "agents": {
     "main": { "type": "main", "parentAgentId": null },
-    "agent-0": { "type": "sub", "parentAgentId": "main" },
+    "agent-0": {
+      "type": "sub",
+      "parentAgentId": "main",
+      "labels": { "parentAgentId": "main", "profileName": "explore" }
+    },
     "agent-1": { "type": "sub", "parentAgentId": "main" },
     "agent-nested": { "type": "sub", "parentAgentId": "agent-0" },
     "independent-0": { "type": "independent", "parentAgentId": null }

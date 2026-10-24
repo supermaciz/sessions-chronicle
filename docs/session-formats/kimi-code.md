@@ -334,15 +334,11 @@ labels *what caused* the LLM request, not how the numbers accumulate:
   in practice `"session"` records are the tokens auto-compaction spent on the
   session's behalf.
 
-Both scopes are **deltas, never snapshots**: `UsageAgentModel` folds every
-`usage.record` into `byModel` with `addUsage` regardless of scope, so a correct
-session total is the sum of *all* `usage.record` payloads. Summing only
-`"turn"` yields the conversational cost and under-reports the session's real
-token spend by whatever compaction consumed.
-
-Sessions Chronicle currently sums only `usageScope == "turn"`
-(`crates/core/src/parsers/kimi_code.rs`), so displayed totals exclude
-compaction usage.
+Both scopes are **deltas, never snapshots**. Sessions Chronicle sums every  
+`usage.record` payload exactly once, regardless of `usageScope` (including  
+missing or unknown scope values), so session-scoped compaction usage is  
+included. If a journal has no `usage.record` records, the parser falls back to  
+summing `step.end.usage`; it never adds the two carriers together.
 
 ### Model metadata
 
@@ -381,12 +377,14 @@ A subagent launched via the `Agent` tool:
 }
 ```
 
-The subagent's task prompt is submitted with
-`origin: {"kind": "system_trigger", "name": "subagent"}`
-(`AGENT_RUN_PROMPT_ORIGIN`,
-`packages/agent-core-v2/src/session/subagent/runAgentTurn.ts`) — the
-`turn.prompt` records in a child journal are **never** `user`-origin, on every
-CLI version sampled locally (0.31.1-era through 2.3.1).
+The subagent's task prompt is commonly submitted with  
+`origin: {"kind": "system_trigger", "name": "subagent"}`  
+(`AGENT_RUN_PROMPT_ORIGIN`,  
+`packages/agent-core-v2/src/session/subagent/runAgentTurn.ts`). Child journals  
+can also contain a `user`-origin task prompt, notably around fork behavior; the  
+exact origin used for a fork task remains an open question. Sessions Chronicle  
+accepts both origins in child journals, while main sessions still require a  
+genuine `user`-origin prompt.
 
 `agentMetaSchema.type` is `main | sub | independent`; `parentAgentId` gives
 the parent linkage, and `labels` / `swarmItem` can annotate swarm spawns. In
@@ -397,15 +395,43 @@ needed for linkage — the `agents` map names both endpoints.
 
 An experimental `fork: true` arg on the `Agent` tool (flag `subagent_fork` /
 `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK`, still experimental at main/2.3.1)
-spawns the child with a snapshot of the caller's context
-(`session/subagent/subagentService.ts` → `agentLifecycle.fork()`): the child's
-`state.json` agent entry carries `forkedFrom: <callerAgentId>`, and the copied
-messages are persisted in the child journal as `context.append_message`
-records (with any trailing open tool exchange closed first, plus a
-`fork_context` reminder). The fork task itself arrives as a normal user
-`turn.prompt`, so readers that gate `context.append_message` behind the
-absence of real turn prompts never surface the copied parent context as the
-child's own messages.
+spawns the child with a snapshot of the caller's context  
+(`session/subagent/subagentService.ts` → `agentLifecycle.fork()`). The child's  
+`state.json` agent entry carries `forkedFrom: <callerAgentId>`, and copied  
+messages are persisted as `context.append_message` records (with any trailing  
+open tool exchange closed first, plus a `fork_context` reminder). The task  
+prompt's origin in a forked child is not settled by the available evidence;  
+both `user` and `system_trigger`/`subagent` are accepted in child journals.  
+Because a genuine task prompt is present, copied parent context is not  
+mistaken for the child's own messages.
+
+### AgentSwarm
+
+An `AgentSwarm` tool call carries `description`, `subagent_type`,  
+`prompt_template` (which may contain `{{item}}`), and an ordered `items` array.  
+Its result output may contain an `<agent_swarm_result>` wrapper with one  
+`<subagent agent_id="…" item="…" outcome="…">…</subagent>` block per item.  
+The `item` value associates a result block with its swarm item; the body is the  
+item's result summary. Child metadata may identify the item as  
+`labels.swarmItem`; older journals may instead put `swarmItem` at the top  
+level of the agent entry.
+
+Sessions Chronicle expands a resolved call into one subagent item per matched  
+swarm item, in `items` order. It substitutes each item into `prompt_template`,  
+and strips a leading `<git-context>` block from child task prompts before  
+showing the child transcript or title.
+
+### Resumed subagents
+
+Several `Agent` calls can refer to the same child—for example, later calls can  
+resume it with `args.resume`. Sessions Chronicle keeps a transcript item for  
+each call and links them all to the same child session. This makes repeated  
+work on one subagent visible without creating duplicate child sessions.
+
+For ordinary children, a consistent result header alone can identify a resumed  
+child. Once a child has been consumed by a resolved `AgentSwarm`, only a later  
+`Agent` call with explicit matching `args.resume` can link to it; a header-only  
+resume stays a generic tool call.
 
 ### Forks
 
@@ -466,25 +492,20 @@ The parser and indexer implement the current TypeScript CLI format:
 - Incremental indexing uses one composite bundle fingerprint containing
   `state.json` and every agent journal declared by `state.json.agents`; a
   changed child journal therefore reindexes the whole bundle atomically.
-- **Known gap (confirmed 2026-10-23): subagent linkage is broken on real
-  sessions.** Subagent journals are meant to become namespaced synthetic child
-  sessions linked to their parent through `parentAgentId`, but real subagent
-  `turn.prompt` records carry `origin: {"kind": "system_trigger",
-  "name": "subagent"}` (see [Threading](#threading)), which the parser's
-  genuine-prompt gate (`origin.kind == "user"`) rejects. Every child journal
-  therefore fails with `NoUserMessages` and is omitted, and the parent's
-  `Agent` calls stay generic tool calls — verified against a production index
-  (5 `Agent` tool calls, 0 child sessions, 0 subagent rows across 28 Kimi
-  sessions). The fixture and unit tests write child journals with
-  `origin.kind == "user"`, which no real CLI version emits, so the suite is
-  green while the feature is dead on real data. Fix direction: accept
-  `system_trigger` + `name == "subagent"` prompts in child journals only
-  (keep the strict gate for main sessions) and align the fixture with the
-  real origin shape. Main sessions can resume with `kimi --session <id>`;
-  synthetic children cannot be resumed directly.
-- Bundles without a genuine user-origin prompt are not indexed. If an existing
-  bundle becomes injection-only, its main session, synthetic children, links,
-  transcript content, and fingerprints are pruned.
+- Subagent journals with `parentAgentId` are indexed as synthetic child  
+  sessions. Child journals accept `user` prompts and  
+  `system_trigger`/`subagent` task prompts; main sessions still require a  
+  genuine user prompt. Leading `<git-context>` blocks are removed from child  
+  task prompts before they are shown in the transcript or used for the title.  
+  Main sessions can resume with `kimi --session <id>`; synthetic children
+  cannot be resumed directly.
+- `Agent` calls link through child metadata and call/result evidence. Calls  
+  resumed with `args.resume` can produce multiple subagent items linked to one  
+  child session. `AgentSwarm` calls are expanded into ordered item rows when  
+  their result and child metadata can be matched; see [AgentSwarm](#agentswarm).
+- Main sessions without a genuine user-origin prompt are not indexed. If an  
+  existing bundle's main journal becomes injection-only, its main session,  
+  synthetic children, links, transcript content, and fingerprints are pruned.
 - Custom `$KIMI_CODE_HOME` locations work when visible in the Flatpak sandbox.
   Legacy sessions under `~/.kimi` are not parsed.
 - Unknown or newer wire records (the 0.32–0.41 additions such as `prompt.*`,
@@ -494,22 +515,16 @@ The parser and indexer implement the current TypeScript CLI format:
   (verified 2026-09-06). `state.json` is read with both `workDir` and `cwd`,
   and `workspaces.json` with its versioned nested shape, so the
   `titleKind`/`cwd` transition is absorbed without parser changes.
-- The 2.3.x drift observed on 2026-10-23 is absorbed the same way: the new
-  `changeNotifier.snapshot` / `agent.message.appended` / `agent.turn.started` /
-  `agent.turn.ended` records are skipped, `cwd`-only `state.json` files parse
-  through the existing fallback, and `Agent` calls without `args.agent_id`
-  still match their child through the `agent_id:` header line in the result
-  text. Not yet absorbed: `labels.profileName` is ignored (agent names come
-  from `args.subagent_type` only) and subagent `result_summary` keeps the
-  `agent_id:`/`status:` header lines. `agent.message.appended` is confirmed
-  (source, 2026-10-23) as a human-history projection coexisting with
-  `context.append_message`, not a replacement — but if that ever changes, the
-  user-message extraction paths would need re-evaluation. Forked subagents
-  (experimental `fork: true`) would hit the same child-prompt gate as regular
-  subagents: their task prompt is also a `system_trigger`/`subagent` record,
-  and their copied parent context arrives as `context.append_message`, which
-  the parser only reads when no real `turn.prompt` exists; the agent-level
-  `forkedFrom` field is ignored like other unknown metadata.
+- The 2.3.x `changeNotifier.snapshot`, `agent.message.appended`,  
+  `agent.turn.started`, and `agent.turn.ended` records are skipped, while  
+  `cwd`-only `state.json` files parse through the existing fallback.  
+  `Agent` calls without `args.agent_id` can still match their child through  
+  result evidence such as the `agent_id:` header. Child `labels.profileName`  
+  and both forms of `swarmItem` metadata are read; result headers are removed  
+  when extracting the subagent summary. `agent.message.appended` is a  
+  human-history projection that coexists with `context.append_message`, not a  
+  replacement. Forked child journals accept either task-prompt origin noted in  
+  [Threading](#threading); copied context is not surfaced as child messages.
 
 ---
 
