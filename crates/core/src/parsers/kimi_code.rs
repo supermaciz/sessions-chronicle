@@ -950,6 +950,8 @@ mod tests {
         assert!(parsed.tool_calls.is_empty());
     }
 }
+mod text;
+
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
