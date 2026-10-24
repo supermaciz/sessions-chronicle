@@ -971,7 +971,7 @@ mod tests {
     }
 
     #[test]
-    fn models_follow_steps_and_turn_usage_wins_without_double_counting() {
+    fn models_follow_steps_and_usage_records_win_without_double_counting() {
         let root = write_bundle(
             state(),
             &[
@@ -986,6 +986,8 @@ mod tests {
                 r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-3","turnId":"0","step":3}}"#,
                 r#"{"type":"context.append_loop_event","event":{"type":"content.part","stepUuid":"step-3","part":{"type":"text","text":"Fallback model"}}}"#,
                 r#"{"type":"usage.record","usageScope":"turn","usage":{"inputOther":100,"output":20,"inputCacheRead":30,"inputCacheCreation":4}}"#,
+                r#"{"type":"usage.record","usageScope":"session","usage":{"inputOther":50,"output":5,"inputCacheRead":0,"inputCacheCreation":0}}"#,
+                r#"{"type":"usage.record","usage":{"inputOther":1,"output":0}}"#,
                 r#"{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"step-2","usage":{"inputOther":999,"output":999,"inputCacheRead":999,"inputCacheCreation":999}}}"#,
             ],
         );
@@ -1005,8 +1007,8 @@ mod tests {
         assert_eq!(
             parsed.main.token_usage,
             Some(TokenUsage {
-                input_tokens: 100,
-                output_tokens: 20,
+                input_tokens: 151,
+                output_tokens: 25,
                 cache_read_tokens: Some(30),
                 cache_write_tokens: Some(4),
                 reasoning_tokens: None,
@@ -1841,7 +1843,7 @@ struct JournalState {
     pending_models_by_turn_step: HashMap<String, VecDeque<String>>,
     unscoped_models: VecDeque<String>,
     active_model_hint: Option<String>,
-    turn_usage: UsageAccumulator,
+    record_usage: UsageAccumulator,
     step_usage: UsageAccumulator,
     agent_calls: Vec<AgentCallCandidate>,
 }
@@ -2874,11 +2876,9 @@ fn parse_journal(
             Some("config.update") => {
                 state.active_model_hint = normalized_model(value.get("modelAlias"))
             }
-            Some("usage.record")
-                if value.get("usageScope").and_then(Value::as_str) == Some("turn") =>
-            {
+            Some("usage.record") => {
                 if let Some(usage) = parse_usage(value.get("usage")) {
-                    state.turn_usage.add(usage);
+                    state.record_usage.add(usage);
                 }
             }
             Some("turn.prompt")
@@ -3124,8 +3124,8 @@ fn parse_journal(
             subagents: Vec::new(),
             transcript_items,
             reasoning_attachments,
-            token_usage: if state.turn_usage.seen {
-                state.turn_usage.into_token_usage()
+            token_usage: if state.record_usage.seen {
+                state.record_usage.into_token_usage()
             } else {
                 state.step_usage.into_token_usage()
             },
