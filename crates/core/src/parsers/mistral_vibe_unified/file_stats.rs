@@ -55,6 +55,19 @@ impl FileSample {
             &fs::symlink_metadata(path)?,
         ))
     }
+
+    /// Exact freshness comparison against metadata the caller sampled
+    /// (`symlink_metadata` at the freshness call sites): size, mtime,
+    /// device and inode must all be identical.  This is deliberately
+    /// stricter than the growth-tolerant read-stability check, which
+    /// accepts a larger size on the same dev/ino; that policy stays at
+    /// its own call site and is never routed through here.
+    pub fn matches_metadata(&self, metadata: &Metadata) -> bool {
+        metadata.len() == self.size
+            && mtime_ns(metadata) == self.mtime_ns
+            && metadata.dev() == self.dev
+            && metadata.ino() == self.ino
+    }
 }
 
 /// A `symlink_metadata` snapshot of one consumed saved result, used for
@@ -163,6 +176,59 @@ mod tests {
             FileStat::from_metadata(&handle.metadata().unwrap()),
             target_stat,
             "the handle reports the followed target"
+        );
+    }
+
+    #[test]
+    fn matches_metadata_is_exact_and_rejects_growth_and_replacement() {
+        // Exact freshness comparison on FileSample: every pinned field
+        // must be identical.  Growth (a larger size on the same inode)
+        // and replacement (a different inode with identical bytes) are
+        // both changes — the growth-tolerant read-stability policy is
+        // a separate, deliberately different comparison that stays at
+        // its own call site.
+        let temp = TempDir::new().unwrap();
+        let relative = "journal/0000000000000002.jsonl";
+        let path = temp.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "record\n").unwrap();
+        let metadata = std::fs::symlink_metadata(&path).unwrap();
+        let sample = FileSample::for_path(relative.to_string(), &path).unwrap();
+
+        // Exact equality: the very stat that produced the sample matches,
+        // and so does an unchanged re-read of the same file.
+        assert!(sample.matches_metadata(&metadata));
+        assert!(sample.matches_metadata(&std::fs::symlink_metadata(&path).unwrap()));
+
+        // Growth after the sample is a change for freshness.
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"more\n").unwrap();
+        drop(file);
+        let grown = std::fs::symlink_metadata(&path).unwrap();
+        assert_eq!(grown.ino(), metadata.ino(), "fixture premise: same inode");
+        assert!(
+            grown.len() > metadata.len(),
+            "fixture premise: the file grew"
+        );
+        assert!(
+            !sample.matches_metadata(&grown),
+            "exact freshness must reject journal growth"
+        );
+
+        // Replacement: identical bytes — same size — under a different
+        // inode is still a different file.
+        let twin = temp.path().join("twin.jsonl");
+        std::fs::write(&twin, "record\n").unwrap();
+        let twin_metadata = std::fs::symlink_metadata(&twin).unwrap();
+        assert_eq!(twin_metadata.len(), metadata.len());
+        assert_ne!(twin_metadata.ino(), metadata.ino());
+        assert!(
+            !sample.matches_metadata(&twin_metadata),
+            "a same-size replacement must not match"
         );
     }
 }

@@ -1,5 +1,4 @@
 use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -76,18 +75,19 @@ fn stat_matches(expected: &FileStat, path: &Path) -> bool {
 }
 
 fn sample_matches(expected: &FileSample, path: &Path) -> bool {
+    // Freshness samples with symlink_metadata and compares exactly;
+    // the shared comparison lives on FileSample so the stat is never
+    // rebuilt (and `relative_path` never cloned) just to be compared.
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return false;
     };
-    metadata.len() == expected.size
-        && metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec() == expected.mtime_ns
-        && metadata.dev() == expected.dev
-        && metadata.ino() == expected.ino
+    expected.matches_metadata(&metadata)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::MetadataExt;
     use tempfile::tempdir;
 
     #[test]
