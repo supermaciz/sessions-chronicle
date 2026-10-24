@@ -33,7 +33,10 @@ Validation:
 
 | File | Expected change |
 |---|---|
-| `Cargo.toml` | Set `[package].version = "<new_version>"` |
+| `Cargo.toml` | Set the root `[package].version = "<new_version>"` |
+| `crates/core/Cargo.toml` | Set `[package].version = "<new_version>"` |
+| `crates/search-provider/Cargo.toml` | Set `[package].version = "<new_version>"` |
+| `Cargo.lock` | Update the locked versions of `sessions-chronicle`, `sessions-chronicle-core`, and `sessions-chronicle-search-provider` to match their manifests |
 | `meson.build` | Set `project(..., version: '<new_version>', ...)` |
 | `src/config.rs.in` | Keep `pub const VERSION: &str = @VERSION@;` (never edit `src/config.rs`) |
 | `data/dev.maciz.sessionschronicle.metainfo.xml.in.in` | Add newest `<release version="<new_version>" date="YYYY-MM-DD">...</release>` |
@@ -41,18 +44,26 @@ Validation:
 ## Implementation Workflow
 
 1. Validate `new_version` format.
-2. Update `Cargo.toml` version.
-3. Update `meson.build` project version.
-4. Verify `src/config.rs.in` still uses `@VERSION@` placeholder.
-5. Prepare release notes for metainfo:
+2. Update the `[package].version` in all three workspace manifests: `Cargo.toml`, `crates/core/Cargo.toml`, and `crates/search-provider/Cargo.toml`.
+3. Update the corresponding three package entries in `Cargo.lock`; do not change dependency versions as part of the app version bump.
+4. Update `meson.build` project version.
+5. Verify `src/config.rs.in` still uses the `@VERSION@` placeholder; never edit generated `src/config.rs`.
+6. Prepare release notes for metainfo:
    - If `release_notes` provided: use it.
    - If missing: auto-generate a draft from recent commits/diff context, then ask user approval before writing.
-6. Insert new `<release>` block as first entry under `<releases>`.
-7. Verify changes in all four target files.
-8. Run final verification command:
+7. Insert the new `<release>` block as the first entry under `<releases>`.
+8. Verify that all three Cargo manifests, their three `Cargo.lock` package entries, `meson.build`, the config template, and the metainfo release entry are consistent. Run `cargo metadata --locked --no-deps --format-version 1` to confirm lockfile consistency.
+9. Run final Flatpak verification:
 
 ```bash
 flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean
+```
+
+If the build fails because `rofiles-fuse` cannot mount in the environment
+(for example, `fusermount3` reports permission denied), retry with:
+
+```bash
+flatpak-builder --user --disable-rofiles-fuse flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean
 ```
 
 ## Example Release Entry
@@ -76,7 +87,9 @@ flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.j
 | Running `cargo build` only | Run the Flatpak build command above |
 | Writing generic release notes without approval | Generate draft notes, then ask user to approve/edit before writing |
 | Editing `src/config.rs` | Edit/verify `src/config.rs.in` only; `src/config.rs` is generated |
-| Forgetting `meson.build` version | Update both `Cargo.toml` and `meson.build` every release |
+| Updating only the root `Cargo.toml` | Keep all three workspace package manifests and their `Cargo.lock` entries aligned |
+| Forgetting `meson.build` version | Update all three Cargo manifests, `Cargo.lock`, and `meson.build` every release |
+| Failing Flatpak build due to unavailable FUSE mounts | Retry with `--disable-rofiles-fuse`; report any subsequent build failure normally |
 
 ## Rationalization Table
 
@@ -85,13 +98,15 @@ flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.j
 | "`cargo build` is enough" | This project is validated through Meson/Flatpak packaging flow |
 | "I can add placeholder notes now" | Release notes must be reviewed or approved before writing |
 | "`src/config.rs` is quicker to edit" | It is generated and will be overwritten |
-| "Three files are enough" | Release metadata must include metainfo release entry too |
+| "Only the root Cargo.toml needs a bump" | The app, core library, and search provider are all workspace packages with tracked lockfile versions |
+| "The usual Flatpak build failed before compiling" | An environment-level rofiles-fuse permission failure can be retried with `--disable-rofiles-fuse`; the Flatpak build must still complete successfully |
 
 ## Red Flags - STOP and Correct
 
 - Skipping user approval for auto-generated release notes
 - Editing `src/config.rs`
 - Forgetting `meson.build` or metainfo release entry
+- Leaving a workspace crate manifest or its lockfile package entry on an old version
 - Finishing without running the Flatpak build command
 
 If any red flag appears, fix it before declaring the version bump complete.
