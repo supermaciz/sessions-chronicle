@@ -75,6 +75,279 @@ mod tests {
         })
     }
 
+    fn swarm_state() -> Value {
+        let mut metadata = state();
+        for (agent_id, item) in [("agent-0", "A"), ("agent-1", "B")] {
+            metadata["agents"][agent_id] = json!({
+                "type": "sub",
+                "labels": {"parentAgentId": "main", "swarmItem": item, "profileName": "explore"}
+            });
+        }
+        metadata
+    }
+
+    fn swarm_records(result: Option<Value>) -> Vec<Value> {
+        let mut records = vec![
+            json!({"type":"turn.prompt", "time":1785320000000_i64, "input":[{"type":"text", "text":"Review both"}], "origin":{"kind":"user"}}),
+            json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"text", "text":"Starting review"}}}),
+            json!({"type":"context.append_loop_event", "time":1785320000010_i64, "event":{"type":"tool.call", "toolCallId":"AgentSwarm_0", "name":"AgentSwarm", "args":{"description":"Review items", "subagent_type":"explore", "prompt_template":"Review {{item}} now", "items":["A", "B"]}}}),
+        ];
+        if let Some(result) = result {
+            records.push(json!({"type":"context.append_loop_event", "time":1785320000040_i64, "event":{"type":"tool.result", "toolCallId":"AgentSwarm_0", "result":result}}));
+        }
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"text", "text":"Review complete"}}}));
+        records
+    }
+
+    fn parse_swarm_records(metadata: Value, records: &[Value]) -> KimiParsedBundle {
+        let records: Vec<_> = records.iter().map(Value::to_string).collect();
+        let root = write_bundle(
+            metadata,
+            &records.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        for (agent_id, prompt) in [("agent-0", "Review A now"), ("agent-1", "Review B now")] {
+            write_agent_journal(&root, agent_id, &[&child_prompt(1785320000030, prompt)]);
+        }
+        KimiCodeParser::new(root.path())
+            .parse_session_dir(&session_dir(&root))
+            .unwrap()
+    }
+
+    #[test]
+    fn swarm_call_expands_into_one_item_per_child() {
+        // Result order differs from items: transcript order must follow args.items.
+        let records = swarm_records(Some(
+            json!({"output":"<agent_swarm_result>\n<summary>completed: 2</summary>\n<subagent agent_id=\"agent-1\" item=\"B\" outcome=\"completed\">Body B</subagent>\n<subagent agent_id=\"agent-0\" item=\"A\" outcome=\"completed\">Body A</subagent>\n</agent_swarm_result>"}),
+        ));
+        let parsed = parse_swarm_records(swarm_state(), &records);
+        assert_eq!(
+            parsed
+                .main
+                .transcript_items
+                .iter()
+                .map(|item| item.kind.clone())
+                .collect::<Vec<_>>(),
+            [
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Message,
+                TranscriptItemKind::Subagent,
+                TranscriptItemKind::Subagent,
+                TranscriptItemKind::Message
+            ]
+        );
+        assert!(parsed.main.tool_calls.is_empty());
+        assert_eq!(parsed.main.subagents.len(), 2);
+        for (index, (agent_id, title, prompt, summary)) in [
+            ("agent-0", "A", "Review A now", "Body A"),
+            ("agent-1", "B", "Review B now", "Body B"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let row = &parsed.main.subagents[index];
+            assert_eq!(
+                row.id,
+                format!(
+                    "kimi-agent-call::session_00000000-0000-4000-8000-000000000001::AgentSwarm_0::{agent_id}"
+                )
+            );
+            assert_eq!(row.agent_id.as_deref(), Some(agent_id));
+            assert_eq!(row.title, title);
+            assert_eq!(row.prompt.as_deref(), Some(prompt));
+            assert_eq!(row.agent_name.as_deref(), Some("explore"));
+            assert_eq!(row.result_summary.as_deref(), Some(summary));
+            assert_eq!(row.parser_ref.as_deref(), Some("AgentSwarm_0"));
+            assert_eq!(
+                row.child_session_id.as_deref(),
+                Some(parsed.children[index].session.id.as_str())
+            );
+            assert_eq!(
+                parsed.main.transcript_items[index + 2]
+                    .subagent_id
+                    .as_deref(),
+                Some(row.id.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn swarm_reasoning_moves_to_first_item() {
+        let mut records = swarm_records(None);
+        records.insert(2, json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"think", "think":"Fan out"}}}));
+        records.insert(4, json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"think", "think":"Summarize"}}}));
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"content.part", "part":{"type":"think", "think":"Read next"}}}));
+        records.push(json!({"type":"context.append_loop_event", "event":{"type":"tool.call", "toolCallId":"Read_0", "name":"Read", "args":{"path":"README.md"}}}));
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(
+            parsed
+                .reasoning_attachments
+                .iter()
+                .map(|attachment| (
+                    attachment.transcript_item_index,
+                    attachment.visible_text.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (2, Some("Fan out")),
+                (4, Some("Summarize")),
+                (5, Some("Read next"))
+            ]
+        );
+        assert_eq!(
+            parsed.transcript_items[2].kind,
+            TranscriptItemKind::Subagent
+        );
+        assert_eq!(
+            parsed.transcript_items[3].kind,
+            TranscriptItemKind::Subagent
+        );
+        assert_eq!(
+            parsed.transcript_items[5].kind,
+            TranscriptItemKind::ToolCall
+        );
+    }
+
+    #[test]
+    fn pending_swarm_expands_through_items() {
+        let mut metadata = swarm_state();
+        metadata["agents"]["agent-1"]["labels"]
+            .as_object_mut()
+            .unwrap()
+            .remove("profileName");
+        let parsed = parse_swarm_records(metadata, &swarm_records(None)).main;
+        assert_eq!(parsed.subagents.len(), 2);
+        assert!(
+            parsed
+                .subagents
+                .iter()
+                .all(|row| row.result_summary.is_none())
+        );
+        assert_eq!(parsed.subagents[1].agent_name.as_deref(), Some("explore"));
+        assert!(parsed.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn failed_swarm_uses_error_output_summary() {
+        let mut metadata = swarm_state();
+        for (agent_id, item) in [("agent-0", "A"), ("agent-1", "B")] {
+            metadata["agents"][agent_id]["labels"]
+                .as_object_mut()
+                .unwrap()
+                .remove("swarmItem");
+            metadata["agents"][agent_id]["swarmItem"] = json!(item);
+        }
+        let parsed = parse_swarm_records(
+            metadata,
+            &swarm_records(Some(json!({"output":"Session closed", "isError":true}))),
+        )
+        .main;
+        assert_eq!(parsed.subagents.len(), 2);
+        assert!(
+            parsed
+                .subagents
+                .iter()
+                .all(|row| row.result_summary.as_deref() == Some("Session closed"))
+        );
+        assert!(parsed.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn unresolvable_swarm_stays_generic() {
+        let mut records = swarm_records(None);
+        records[2]["event"]["args"]["items"] = json!(["A", "missing"]);
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].tool_name, "AgentSwarm");
+        assert_eq!(
+            parsed.transcript_items[2].kind,
+            TranscriptItemKind::ToolCall
+        );
+    }
+
+    #[test]
+    fn later_resume_can_target_a_swarm_child() {
+        let mut records = swarm_records(None);
+        // Journal order wins over a backwards wall clock for an explicit resume.
+        records.push(json!({"type":"context.append_loop_event", "time":1785320000005_i64, "event":{"type":"tool.call", "toolCallId":"Agent_resume", "name":"Agent", "args":{"resume":"agent-0"}}}));
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(parsed.subagents.len(), 3);
+        assert_eq!(
+            parsed.subagents[2].parser_ref.as_deref(),
+            Some("Agent_resume")
+        );
+        assert_eq!(
+            parsed.subagents[2].child_session_id,
+            parsed.subagents[0].child_session_id
+        );
+        assert!(parsed.tool_calls.is_empty());
+        assert_eq!(
+            parsed.transcript_items[5].subagent_id.as_deref(),
+            Some(parsed.subagents[2].id.as_str())
+        );
+    }
+
+    #[test]
+    fn synthetic_swarm_consumption_rejects_earlier_and_non_resume_agent_evidence() {
+        for (earlier, args, result) in [
+            (true, json!({"resume":"agent-0"}), None),
+            (true, json!({"agent_id":"agent-0"}), None),
+            (false, json!({"agent_id":"agent-0"}), None),
+            (
+                false,
+                json!({}),
+                Some(json!({"output":"agent_id: agent-0\nstatus: completed\n\nDone."})),
+            ),
+            (false, json!({}), None),
+        ] {
+            let mut records = swarm_records(Some(
+                json!({"output":"<agent_swarm_result>\n<subagent agent_id=\"agent-0\" item=\"A\">Body A</subagent>\n<subagent agent_id=\"agent-1\" item=\"B\">Body B</subagent>\n</agent_swarm_result>"}),
+            ));
+            // No swarmItem label: consumed children must also be excluded from chronology.
+            let mut metadata = swarm_state();
+            for agent_id in ["agent-0", "agent-1"] {
+                metadata["agents"][agent_id]["labels"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("swarmItem");
+            }
+            // Deliberately inverted clock: call order, not timestamp, defines a later resume.
+            let call = json!({"type":"context.append_loop_event", "time":1785320000020_i64, "event":{"type":"tool.call", "toolCallId":"Agent_rejected", "name":"Agent", "args":args}});
+            if earlier {
+                records.insert(2, call);
+            } else {
+                records.push(call);
+            }
+            let chronological = args == json!({}) && result.is_none();
+            if chronological {
+                // Match cardinalities so excluding consumed children is what prevents links.
+                records.push(json!({"type":"context.append_loop_event", "time":1785320000021_i64, "event":{"type":"tool.call", "toolCallId":"Agent_also_rejected", "name":"Agent", "args":{}}}));
+            }
+            if let Some(result) = result {
+                records.push(json!({"type":"context.append_loop_event", "event":{"type":"tool.result", "toolCallId":"Agent_rejected", "result":result}}));
+            }
+            let parsed = parse_swarm_records(metadata, &records).main;
+            assert_eq!(
+                parsed.tool_calls.len(),
+                if chronological { 2 } else { 1 },
+                "earlier={earlier}, args={args}"
+            );
+            assert!(
+                parsed
+                    .tool_calls
+                    .iter()
+                    .all(|call| call.tool_name == "Agent")
+            );
+            assert_eq!(parsed.subagents.len(), 2);
+            assert!(
+                parsed
+                    .subagents
+                    .iter()
+                    .all(|row| row.parser_ref.as_deref() == Some("AgentSwarm_0"))
+            );
+        }
+    }
+
     #[test]
     fn main_messages_use_turn_prompt_once_and_preserve_text_part_order() {
         let root = write_bundle(
@@ -2256,8 +2529,95 @@ fn match_agent_calls(
     candidates: &[AgentCallCandidate],
     children: &[ChildLink<'_>],
 ) {
+    let swarm_children: Vec<_> = children
+        .iter()
+        .map(|child| swarm::SwarmChild {
+            agent_id: child.agent_id,
+            swarm_item: child.swarm_item,
+            first_wire_time_ms: child.first_wire_time_ms,
+        })
+        .collect();
+    let mut swarm_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| candidate.kind == DelegationKind::Swarm)
+        .collect();
+    swarm_candidates.sort_by_key(|candidate| candidate.transcript_item_index);
+    let mut taken = HashSet::new();
+    let mut consumed_at = HashMap::new();
+    let mut expansions = Vec::new();
+    let mut removed_tool_ids = HashSet::new();
+    for candidate in swarm_candidates {
+        let items: Option<Vec<String>> = candidate
+            .args
+            .as_ref()
+            .and_then(|args| args.get("items"))
+            .and_then(Value::as_array)
+            .and_then(|items| {
+                items
+                    .iter()
+                    .map(|item| item.as_str().map(str::to_string))
+                    .collect()
+            });
+        let call = swarm::SwarmCall {
+            items: items.as_deref(),
+            call_time_ms: candidate.call_time_ms,
+            result_output: candidate.result_text.as_deref(),
+            result_is_error: candidate.result_is_error,
+        };
+        let Some(members) = swarm::resolve_swarm(&call, &swarm_children, &taken)
+            .filter(|members| !members.is_empty())
+        else {
+            continue;
+        };
+        let args = candidate.args.as_ref();
+        let template = args
+            .and_then(|args| args.get("prompt_template"))
+            .and_then(Value::as_str);
+        let mut subagent_ids = Vec::with_capacity(members.len());
+        for member in members {
+            // Resolution only returns children from this parent's child list.
+            let Some(child) = children
+                .iter()
+                .find(|child| child.agent_id == member.agent_id)
+            else {
+                continue;
+            };
+            let id = format!(
+                "kimi-agent-call::{}::{}::{}",
+                parent.session.id, candidate.raw_call_id, member.agent_id
+            );
+            subagent_ids.push(id.clone());
+            taken.insert(member.agent_id.clone());
+            consumed_at.insert(member.agent_id.clone(), candidate.transcript_item_index);
+            parent.subagents.push(Subagent {
+                id,
+                agent_id: Some(member.agent_id.clone()),
+                agent_name: child.profile_name.map(str::to_string).or_else(|| {
+                    args.and_then(|args| args.get("subagent_type"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                }),
+                session_id: parent.session.id.clone(),
+                title: member.item.clone().unwrap_or(member.agent_id),
+                prompt: template
+                    .zip(member.item.as_deref())
+                    .map(|(template, item)| template.replace("{{item}}", item)),
+                result_summary: member.summary,
+                child_session_id: Some(child.session_id.to_string()),
+                parser_ref: Some(candidate.raw_call_id.clone()),
+            });
+        }
+        expansions.push(expansion::Expansion {
+            item_index: candidate.transcript_item_index,
+            subagent_ids,
+        });
+        removed_tool_ids.insert(format!(
+            "kimi-tool::{}::{}",
+            parent.session.id, candidate.raw_call_id
+        ));
+    }
     let mut matched = HashMap::new();
-    let mut matched_children = HashSet::new();
+    let mut matched_children = taken;
     let evidence: HashMap<_, _> = candidates
         .iter()
         .map(|candidate| (candidate.raw_call_id.as_str(), agent_evidence(candidate)))
@@ -2266,6 +2626,15 @@ fn match_agent_calls(
         if candidate.kind == DelegationKind::Agent
             && let AgentEvidence::Valid(id) = &evidence[candidate.raw_call_id.as_str()]
             && children.iter().any(|child| child.agent_id == id)
+            && consumed_at.get(id).is_none_or(|swarm_index| {
+                candidate.transcript_item_index > *swarm_index
+                    && candidate
+                        .args
+                        .as_ref()
+                        .and_then(|args| args.get("resume"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|resume| resume.trim() == id)
+            })
         {
             matched.insert(candidate.raw_call_id.clone(), id.clone());
             matched_children.insert(id.clone());
@@ -2309,7 +2678,6 @@ fn match_agent_calls(
         }
     }
 
-    let mut removed_tool_ids = HashSet::new();
     for candidate in candidates {
         let Some(agent_id) = matched.get(&candidate.raw_call_id) else {
             continue;
@@ -2377,6 +2745,7 @@ fn match_agent_calls(
     parent
         .tool_calls
         .retain(|call| !removed_tool_ids.contains(&call.id));
+    expansion::expand_transcript(parent, expansions);
 }
 
 fn load_state(path: &Path) -> Result<StateMetadata> {
@@ -2619,9 +2988,13 @@ fn parse_journal(
                             event.get("args"),
                             wire_time.map(|(millis, _)| millis),
                         );
-                        if name == "Agent" {
+                        if matches!(name.as_str(), "Agent" | "AgentSwarm") {
                             state.agent_calls.push(AgentCallCandidate {
-                                kind: DelegationKind::Agent,
+                                kind: if name == "AgentSwarm" {
+                                    DelegationKind::Swarm
+                                } else {
+                                    DelegationKind::Agent
+                                },
                                 raw_call_id: raw_id.clone(),
                                 transcript_item_index: transcript_items
                                     .last()
