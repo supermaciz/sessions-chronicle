@@ -1430,6 +1430,89 @@ mod tests {
     }
 
     #[test]
+    fn chronological_agent_matching_rejects_conflicting_competing_owner() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000005,"event":{"type":"tool.call","toolCallId":"Agent_interrupted","name":"Agent","args":{}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000006,"event":{"type":"tool.result","toolCallId":"Agent_interrupted","result":{"output":"Interrupted by user","isError":true}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_conflict","name":"Agent","args":{"resume":"agent-other"}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000012,"event":{"type":"tool.result","toolCallId":"Agent_conflict","result":{"output":"agent_id: agent-0\nstatus: completed\n\nDone."}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert!(
+            parsed
+                .tool_calls
+                .iter()
+                .all(|call| call.tool_name == "Agent")
+        );
+    }
+
+    #[test]
+    fn chronological_agent_matching_rejects_generic_swarm_competing_owner() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000005,"event":{"type":"tool.call","toolCallId":"Agent_interrupted","name":"Agent","args":{}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000006,"event":{"type":"tool.result","toolCallId":"Agent_interrupted","result":{"output":"Interrupted by user","isError":true}}}"#,
+            r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"AgentSwarm_unmatched","name":"AgentSwarm","args":{"items":["A"]}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert!(
+            parsed
+                .tool_calls
+                .iter()
+                .any(|call| call.tool_name == "AgentSwarm")
+        );
+    }
+
+    #[test]
+    fn agent_result_header_ignores_summary_body_ids() {
+        for output in [
+            "agent_id: agent-0\nstatus: completed\n\n[summary]\nNested result:\nagent_id: agent-other",
+            "agentId: agent-0\nstatus: completed\r\n \r\nNested result:\nagentId: agent-other",
+            "agent_id: agent-0",
+        ] {
+            let result = json!({"type":"context.append_loop_event", "event":{"type":"tool.result", "toolCallId":"Agent_0", "result":{"output":output}}}).to_string();
+            let parsed = parse_single_agent_call(&[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+                &result,
+            ]);
+
+            assert_eq!(parsed.subagents.len(), 1, "{output}");
+            assert_eq!(parsed.subagents[0].agent_id.as_deref(), Some("agent-0"));
+            assert!(parsed.tool_calls.is_empty());
+        }
+    }
+
+    #[test]
+    fn agent_result_body_only_ids_are_not_explicit_evidence() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"Quoted result:\nagent_id: agent-0"}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls[0].tool_name, "Agent");
+    }
+
+    #[test]
+    fn conflicting_agent_result_header_stays_generic() {
+        let parsed = parse_single_agent_call(&[
+            r#"{"type":"turn.prompt","input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{}}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"agent_id: agent-0\nagentId: agent-other\n\nDone."}}}"#,
+        ]);
+
+        assert!(parsed.subagents.is_empty());
+        assert_eq!(parsed.tool_calls[0].tool_name, "Agent");
+    }
+
+    #[test]
     fn chronological_agent_matching_rejects_mixed_batch() {
         let mut metadata = state();
         metadata["agents"] = json!({
@@ -2721,8 +2804,12 @@ fn agent_evidence(candidate: &AgentCallCandidate) -> AgentEvidence {
             }
         }
     }
-    if let Some(text) = candidate.result_text.as_deref() {
-        for line in text.lines() {
+    if let Some((header, _)) = candidate
+        .result_text
+        .as_deref()
+        .and_then(text::split_agent_result_header)
+    {
+        for line in header.lines() {
             let Some((key, value)) = line.split_once(':') else {
                 continue;
             };
@@ -2861,6 +2948,18 @@ fn match_agent_calls(
             matched_children.insert(id.clone());
         }
     }
+    // Unmatched explicit/invalid evidence and unresolved swarms can own the
+    // remaining children too; excluding them from the count would invent links.
+    let has_competing_owner = candidates.iter().any(|candidate| match candidate.kind {
+        DelegationKind::Agent => {
+            !matched.contains_key(&candidate.raw_call_id)
+                && evidence[candidate.raw_call_id.as_str()] != AgentEvidence::Absent
+        }
+        DelegationKind::Swarm => !removed_tool_ids.contains(&format!(
+            "kimi-tool::{}::{}",
+            parent.session.id, candidate.raw_call_id
+        )),
+    });
     let remaining_calls: Vec<_> = candidates
         .iter()
         .filter(|candidate| {
@@ -2873,7 +2972,8 @@ fn match_agent_calls(
         .iter()
         .filter(|child| !matched_children.contains(child.agent_id) && child.swarm_item.is_none())
         .collect();
-    if remaining_calls.len() == remaining_children.len()
+    if !has_competing_owner
+        && remaining_calls.len() == remaining_children.len()
         && remaining_calls
             .iter()
             .all(|candidate| candidate.call_time_ms.is_some())

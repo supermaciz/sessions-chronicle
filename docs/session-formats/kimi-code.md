@@ -425,8 +425,13 @@ showing the child transcript or title.
 
 Several `Agent` calls can refer to the same child—for example, later calls can  
 resume it with `args.resume`. Sessions Chronicle keeps a transcript item for  
-each call and links them all to the same child session. This makes repeated
+each call and links them all to the same child session. This makes repeated  
 work on one subagent visible without creating duplicate child sessions.
+
+For ordinary children, a consistent result header alone can identify a resumed  
+child. Once a child has been consumed by a resolved `AgentSwarm`, only a later  
+`Agent` call with explicit matching `args.resume` can link to it; a header-only  
+resume stays a generic tool call.
 
 ### Forks
 

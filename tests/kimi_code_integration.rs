@@ -428,11 +428,16 @@ fn reindexing_kimi_fixtures_is_stable() {
         .path()
         .join("sessions/wd_swarm_999999999999")
         .join(SWARM_ID);
+    let resume = home
+        .path()
+        .join("sessions/wd_resume_101010101010")
+        .join(RESUME_ID);
 
     indexer.index_kimi_sessions(home.path()).unwrap();
     let connection = rusqlite::Connection::open(database.path()).unwrap();
     let primary_before = bundle_snapshot(&connection, &primary, PRIMARY_ID);
     let swarm_before = bundle_snapshot(&connection, &swarm, SWARM_ID);
+    let resume_before = bundle_snapshot(&connection, &resume, RESUME_ID);
 
     indexer.index_kimi_sessions(home.path()).unwrap();
 
@@ -441,6 +446,100 @@ fn reindexing_kimi_fixtures_is_stable() {
         primary_before
     );
     assert_eq!(bundle_snapshot(&connection, &swarm, SWARM_ID), swarm_before);
+    assert_eq!(
+        bundle_snapshot(&connection, &resume, RESUME_ID),
+        resume_before
+    );
+}
+
+#[test]
+fn v21_upgrade_incrementally_restores_kimi_children_and_links() {
+    let home = copied_home();
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let primary = primary_dir(home.path());
+    let sources = all_sources(home.path());
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    indexer.index_all_incremental(&sources).unwrap();
+    drop(indexer);
+
+    let connection = rusqlite::Connection::open(database.path()).unwrap();
+    let expected = bundle_snapshot(&connection, &primary, PRIMARY_ID);
+    assert_eq!(expected.session_project_ids.len(), 4);
+    assert_eq!(expected.subagent_links.len(), 2);
+    assert!(!expected.fingerprints.is_empty());
+
+    // Model v21's already-indexed main transcript with generic Agent calls,
+    // omitted child sessions/links, and still-current bundle fingerprints.
+    connection
+        .execute(
+            "INSERT INTO tool_calls (id, session_id, tool_name, status, parser_call_id)
+             SELECT 'kimi-tool::' || session_id || '::' || parser_ref,
+                    session_id, 'Agent', 'completed', parser_ref
+             FROM subagents WHERE session_id = ?1",
+            [PRIMARY_ID],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE transcript_items SET kind = 'tool_call',
+                 tool_call_id = (SELECT 'kimi-tool::' || s.session_id || '::' || s.parser_ref
+                                 FROM subagents s WHERE s.session_id = ?1 AND s.id = subagent_id),
+                 subagent_id = NULL
+             WHERE session_id = ?1 AND kind = 'subagent'",
+            [PRIMARY_ID],
+        )
+        .unwrap();
+    let child_pattern = format!("kimi-subagent::{PRIMARY_ID}::%");
+    for table in [
+        "messages",
+        "transcript_items",
+        "reasoning_attachments",
+        "context_entries",
+        "tool_calls",
+        "subagents",
+    ] {
+        connection
+            .execute(
+                &format!("DELETE FROM {table} WHERE session_id LIKE ?1"),
+                [&child_pattern],
+            )
+            .unwrap();
+    }
+    connection
+        .execute("DELETE FROM subagents WHERE session_id = ?1", [PRIMARY_ID])
+        .unwrap();
+    connection
+        .execute("DELETE FROM sessions WHERE id LIKE ?1", [&child_pattern])
+        .unwrap();
+    connection
+        .execute_batch("PRAGMA user_version = 21")
+        .unwrap();
+    let old = bundle_snapshot(&connection, &primary, PRIMARY_ID);
+    assert_eq!(old.session_project_ids.len(), 1);
+    assert!(old.subagent_links.is_empty());
+    assert_eq!(old.fingerprints, expected.fingerprints);
+
+    // Normal construction must migrate before an ordinary incremental run.
+    let mut indexer = SessionIndexer::new(database.path()).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        22
+    );
+    let result = indexer.index_all_incremental(&sources).unwrap();
+    assert_eq!(result.per_source[4].errors, 0);
+    let restored = bundle_snapshot(&connection, &primary, PRIMARY_ID);
+    assert_eq!(restored.session_project_ids.len(), 4);
+    assert_eq!(restored.subagent_links.len(), 2);
+    assert_eq!(
+        restored.subagent_links[&(
+            PRIMARY_ID.to_string(),
+            format!("kimi-agent-call::{PRIMARY_ID}::Agent_0")
+        )],
+        Some(child_id(PRIMARY_ID, "agent-0"))
+    );
+    assert_eq!(restored, expected);
 }
 
 #[test]

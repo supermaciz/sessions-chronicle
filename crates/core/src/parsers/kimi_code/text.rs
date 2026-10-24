@@ -20,12 +20,9 @@ pub(super) struct AgentResultText<'a> {
     pub summary: &'a str,
 }
 
-pub(super) fn split_agent_result(text: &str) -> AgentResultText<'_> {
-    if !text.starts_with("agent_id:") {
-        return AgentResultText {
-            actual_subagent_type: None,
-            summary: text,
-        };
+pub(super) fn split_agent_result_header(text: &str) -> Option<(&str, &str)> {
+    if !text.starts_with("agent_id:") && !text.starts_with("agentId:") {
+        return None;
     }
 
     let mut header_end = text.len();
@@ -41,8 +38,16 @@ pub(super) fn split_agent_result(text: &str) -> AgentResultText<'_> {
         offset += line.len();
     }
 
-    let header = &text[..header_end];
-    let remainder = &text[remainder_start..];
+    Some((&text[..header_end], &text[remainder_start..]))
+}
+
+pub(super) fn split_agent_result(text: &str) -> AgentResultText<'_> {
+    let Some((header, remainder)) = split_agent_result_header(text) else {
+        return AgentResultText {
+            actual_subagent_type: None,
+            summary: text,
+        };
+    };
     let actual_subagent_type = header.lines().find_map(|line| {
         line.trim()
             .strip_prefix("actual_subagent_type:")
