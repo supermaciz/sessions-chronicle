@@ -1,0 +1,17 @@
+{
+  "createdAt": "2026-07-29T10:00:00Z",
+  "updatedAt": "2026-07-29T10:05:00Z",
+  "title": "Swarm Session",
+  "workDir": "/tmp/kimi-fixture-swarm",
+  "agents": {
+    "main": { "type": "main", "parentAgentId": null },
+    "agent-0": {
+      "type": "sub",
+      "labels": { "parentAgentId": "main", "swarmItem": "A", "profileName": "explore" }
+    },
+    "agent-1": {
+      "type": "sub",
+      "labels": { "parentAgentId": "main", "swarmItem": "B", "profileName": "explore" }
+    }
+  }
+}

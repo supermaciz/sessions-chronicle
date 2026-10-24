@@ -1,0 +1,3 @@
+{"type":"metadata","protocol_version":"1.5"}
+{"type":"turn.prompt","time":1785320000035,"input":[{"type":"text","text":"Review B now"}],"origin":{"kind":"system_trigger","name":"subagent"}}
+{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"Review B completed"}}}

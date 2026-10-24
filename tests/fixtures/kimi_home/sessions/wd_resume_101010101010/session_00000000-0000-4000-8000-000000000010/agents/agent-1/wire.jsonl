@@ -1,0 +1,4 @@
+{"type":"metadata","protocol_version":"1.5"}
+{"type":"turn.prompt","time":1785320000035,"input":[{"type":"text","text":"Child attempt one"}],"origin":{"kind":"system_trigger","name":"subagent"}}
+{"type":"turn.prompt","time":1785320000065,"input":[{"type":"text","text":"Child attempt two"}],"origin":{"kind":"system_trigger","name":"subagent"}}
+{"type":"turn.prompt","time":1785320000085,"input":[{"type":"text","text":"Child attempt three"}],"origin":{"kind":"system_trigger","name":"subagent"}}

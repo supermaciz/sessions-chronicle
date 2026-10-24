@@ -1,0 +1,10 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1785320000000}
+{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}
+{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_15","name":"Agent","args":{}}}
+{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_15","result":{"output":"agent_id: agent-0\nactual_subagent_type: explore\nstatus: completed\n\n[summary]\nFirst child finished."}}}
+{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.call","toolCallId":"Agent_16","name":"Agent","args":{}}}
+{"type":"context.append_loop_event","time":1785320000040,"event":{"type":"tool.result","toolCallId":"Agent_16","result":{"output":"agent_id: agent-1\nactual_subagent_type: explore\nstatus: failed\n\nsubagent error: The subagent stopped.","isError":true}}}
+{"type":"context.append_loop_event","time":1785320000050,"event":{"type":"tool.call","toolCallId":"Agent_18","name":"Agent","args":{"resume":"agent-1"}}}
+{"type":"context.append_loop_event","time":1785320000060,"event":{"type":"tool.result","toolCallId":"Agent_18","result":{"output":"agent_id: agent-1\nactual_subagent_type: explore\nstatus: failed\n\nsubagent error: The subagent stopped.","isError":true}}}
+{"type":"context.append_loop_event","time":1785320000070,"event":{"type":"tool.call","toolCallId":"Agent_20","name":"Agent","args":{}}}
+{"type":"context.append_loop_event","time":1785320000080,"event":{"type":"tool.result","toolCallId":"Agent_20","result":{"output":"agent_id: agent-1\nactual_subagent_type: explore\nstatus: completed\n\n[summary]\nResumed child finished."}}}
