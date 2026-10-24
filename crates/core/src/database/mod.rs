@@ -20,7 +20,7 @@ use crate::models::{
 
 pub(crate) use context::insert_context_entry;
 pub use context::load_context_full_content;
-pub use indexer::{IndexingStats, SessionIndexer};
+pub use indexer::{IndexingRuntimeState, IndexingStats, SessionIndexer};
 
 const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
 const SESSION_SELECT_COLUMNS: &str =

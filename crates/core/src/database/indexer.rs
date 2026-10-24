@@ -6,9 +6,10 @@ mod vibe_unified;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
 use crate::models::{AiAssistant, IndexingError, IndexingRunResult, PerSourceResult, SourceStatus};
@@ -20,6 +21,69 @@ use crate::session_sources::SessionSources;
 
 pub struct SessionIndexer {
     db: Connection,
+    runtime_state: IndexingRuntimeState,
+}
+
+/// Transient, in-memory indexing context shared by every [`SessionIndexer`]
+/// built from the same state clone.
+///
+/// It carries per-source-path retry bookkeeping — currently the consecutive
+/// unstable-deferral counters of the Unified Mistral Vibe reader — that must
+/// survive the per-request indexer recreation a production worker performs.
+/// `Default` creates a fresh, independent context; `Clone` shares the
+/// interior storage with the original, so one worker can retain a single
+/// state for its fixed database path and hand clones to fresh indexers.
+/// Two independently created states never share data: there is no process
+/// global, and nothing is persisted.
+///
+/// The state is meaningful for one fixed database. Handing the same (cloned)
+/// state to indexers of a different database is an explicit caller decision,
+/// never an implicit leak.
+#[derive(Debug, Default, Clone)]
+pub struct IndexingRuntimeState {
+    unified_deferrals: Arc<Mutex<HashMap<PathBuf, u32>>>,
+}
+
+impl IndexingRuntimeState {
+    /// Current consecutive unstable-deferral count of `path` in this context.
+    #[cfg(test)]
+    pub(crate) fn unified_deferral_count(&self, path: &Path) -> u32 {
+        self.unified_deferrals
+            .lock()
+            .unwrap()
+            .get(path)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Records another consecutive unstable outcome for `path` and returns
+    /// the updated consecutive count.
+    pub(crate) fn note_unified_deferral(&self, path: &Path) -> u32 {
+        let mut deferrals = self.unified_deferrals.lock().unwrap();
+        let count = deferrals.entry(path.to_path_buf()).or_default();
+        *count += 1;
+        *count
+    }
+
+    /// Breaks `path`'s consecutive unstable sequence: the next unstable
+    /// outcome for the path starts a fresh first occurrence.
+    pub(crate) fn break_unified_sequence(&self, path: &Path) {
+        self.unified_deferrals.lock().unwrap().remove(path);
+    }
+
+    /// Breaks the sequences of every removed path after a confirmed removal.
+    pub(crate) fn note_unified_removals(&self, paths: &[PathBuf]) {
+        let mut deferrals = self.unified_deferrals.lock().unwrap();
+        for path in paths {
+            deferrals.remove(path);
+        }
+    }
+
+    /// Clears every deferral counter in this context, after the database
+    /// content they describe has been cleared by a committed transaction.
+    pub(crate) fn clear_unified_deferrals(&self) {
+        self.unified_deferrals.lock().unwrap().clear();
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -355,13 +419,25 @@ fn link_codex_task_child_tx(
 }
 
 impl SessionIndexer {
+    /// Creates an indexer with a fresh, independent runtime context.
+    ///
+    /// Existing callers that index a database in one go keep this default;
+    /// a worker that recreates an indexer per request must retain one
+    /// [`IndexingRuntimeState`] and pass clones to [`SessionIndexer::new_with_state`]
+    /// instead, so transient retry state survives indexer recreation.
     pub fn new(db_path: &Path) -> Result<Self> {
+        Self::new_with_state(db_path, IndexingRuntimeState::default())
+    }
+
+    /// Creates an indexer whose transient retry state is shared with every
+    /// other indexer built from clones of `runtime_state`.
+    pub fn new_with_state(db_path: &Path, runtime_state: IndexingRuntimeState) -> Result<Self> {
         let db = crate::database::open_connection(db_path)?;
         db.pragma_update(None, "journal_mode", "WAL")
             .context("Failed to enable WAL mode")?;
         crate::database::schema::initialize_database(&db)
             .context("Failed to initialize database schema")?;
-        Ok(Self { db })
+        Ok(Self { db, runtime_state })
     }
 
     #[allow(dead_code)]
@@ -1527,6 +1603,10 @@ impl SessionIndexer {
         tx.execute("DELETE FROM opencode_source_fingerprints", [])?;
         tx.execute("DELETE FROM opencode_source_sessions", [])?;
         tx.commit()?;
+        // The transient retry context describes the cleared database rows,
+        // so only a committed clear may reset it; a failed transaction
+        // leaves this context — and every other context — untouched.
+        self.runtime_state.clear_unified_deferrals();
         Ok(())
     }
 

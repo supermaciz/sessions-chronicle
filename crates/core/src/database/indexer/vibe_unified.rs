@@ -1,6 +1,5 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
 
 use super::{IndexingStats, SessionIndexer, push_indexing_error};
 use crate::models::{AiAssistant, IndexingError};
@@ -10,9 +9,6 @@ use crate::parsers::mistral_vibe_unified::{
 };
 use anyhow::Result;
 use rusqlite::OptionalExtension;
-
-static UNIFIED_DEFERRALS: LazyLock<Mutex<HashMap<PathBuf, u32>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl SessionIndexer {
     pub(super) fn index_vibe_unified_sessions(
@@ -57,6 +53,9 @@ impl SessionIndexer {
             present.insert(path.clone());
             if !path.join("CURRENT").exists() {
                 if self.unified_row_exists(&path)? {
+                    // The observed incomplete-store diagnostic breaks any
+                    // pending unstable sequence for this path.
+                    self.runtime_state.break_unified_sequence(&path);
                     self.unified_failure(
                         &path,
                         &UnifiedError::Incomplete("CURRENT missing".into()).into(),
@@ -70,6 +69,9 @@ impl SessionIndexer {
                 && let Some(sig) = self.unified_signature(&path)?
                 && sig.is_current(&path)
             {
+                // A successful current-signature skip observes a healthy
+                // session and breaks any pending unstable sequence for it.
+                self.runtime_state.break_unified_sequence(&path);
                 stats.skipped += 1;
                 continue;
             }
@@ -196,6 +198,9 @@ impl SessionIndexer {
                     errors_detail,
                     stats,
                 )? {
+                    // The collision diagnostic is an observed non-unstable
+                    // outcome for this path; it breaks any pending sequence.
+                    self.runtime_state.break_unified_sequence(path);
                     return Ok(());
                 }
                 let project =
@@ -205,7 +210,7 @@ impl SessionIndexer {
                 Self::link_vibe_unified_subagents_tx(&tx, &parsed.parsed)?;
                 tx.execute("INSERT INTO vibe_unified_signatures(session_dir, signature) VALUES (?1, ?2) ON CONFLICT(session_dir) DO UPDATE SET signature=excluded.signature", rusqlite::params![path.to_string_lossy(), parsed.signature.to_storage()])?;
                 tx.commit()?;
-                UNIFIED_DEFERRALS.lock().unwrap().remove(path);
+                self.runtime_state.break_unified_sequence(path);
                 stats.indexed += 1;
             }
             Err(UnifiedError::NoUserMessages) => {
@@ -218,20 +223,27 @@ impl SessionIndexer {
                 self.remove_unified_tree(path, &child_session_ids, stats)?
             }
             Err(err @ UnifiedError::Unstable(_)) => {
-                let mut deferrals = UNIFIED_DEFERRALS.lock().unwrap();
-                let count = deferrals.entry(path.to_path_buf()).or_default();
-                *count += 1;
-                if *count == 1 {
+                let count = self.runtime_state.note_unified_deferral(path);
+                if count == 1 {
                     tracing::debug!(
                         "Deferring unstable Mistral Vibe Unified session {}: {err}",
                         path.display()
                     );
                     stats.skipped += 1;
                 } else {
+                    // Still the same consecutive sequence: keep reporting
+                    // while it lasts, and keep the counter so a later
+                    // unstable pass is not silently deferred again.
                     self.unified_failure(path, &err.into(), stats, errors_detail);
                 }
             }
-            Err(err) => self.unified_failure(path, &err.into(), stats, errors_detail),
+            Err(err) => {
+                // Any other parser outcome is an observed non-unstable
+                // result: it breaks the consecutive sequence, so the next
+                // unstable read starts a fresh first pass.
+                self.runtime_state.break_unified_sequence(path);
+                self.unified_failure(path, &err.into(), stats, errors_detail);
+            }
         }
         Ok(())
     }
@@ -358,7 +370,7 @@ impl SessionIndexer {
         let paths = paths.into_iter().collect::<Vec<_>>();
         let removed = Self::remove_unified_paths_tx(&tx, &paths)?;
         tx.commit()?;
-        Self::record_unified_removal(&paths, removed, stats);
+        self.record_unified_removal(&paths, removed, stats);
         Ok(())
     }
 
@@ -366,7 +378,7 @@ impl SessionIndexer {
         let tx = self.db.transaction()?;
         let removed = Self::remove_unified_paths_tx(&tx, paths)?;
         tx.commit()?;
-        Self::record_unified_removal(paths, removed, stats);
+        self.record_unified_removal(paths, removed, stats);
         Ok(())
     }
 
@@ -395,10 +407,10 @@ impl SessionIndexer {
         Ok(removed)
     }
 
-    fn record_unified_removal(paths: &[PathBuf], removed: usize, stats: &mut IndexingStats) {
-        for path in paths {
-            UNIFIED_DEFERRALS.lock().unwrap().remove(path);
-        }
+    /// Records a committed Unified removal: the confirmed deletion breaks
+    /// every removed path's pending unstable sequence.
+    fn record_unified_removal(&self, paths: &[PathBuf], removed: usize, stats: &mut IndexingStats) {
+        self.runtime_state.note_unified_removals(paths);
         stats.removed += removed;
     }
     fn link_vibe_unified_subagents_tx(

@@ -2,12 +2,19 @@ use std::path::PathBuf;
 
 use relm4::{ComponentSender, Worker};
 
-use crate::database::SessionIndexer;
+use crate::database::{IndexingRuntimeState, SessionIndexer};
 use crate::models::{IndexingError, PerSourceResult};
 use crate::session_sources::SessionSources;
 
 pub struct IndexingWorker {
     db_path: PathBuf,
+    /// Explicit indexing context for this worker's fixed database path.
+    /// Each request clones it into a fresh `SessionIndexer` (and a fresh
+    /// SQLite connection), so transient retry state — such as consecutive
+    /// Unified deferral counters — survives the per-request indexer
+    /// recreation without becoming a process global. Independently
+    /// created workers never share it.
+    runtime_state: IndexingRuntimeState,
 }
 
 #[derive(Debug, Clone)]
@@ -34,12 +41,18 @@ impl Worker for IndexingWorker {
     type Output = IndexingWorkerOutput;
 
     fn init(init: Self::Init, _sender: ComponentSender<Self>) -> Self {
-        Self { db_path: init }
+        Self {
+            db_path: init,
+            runtime_state: IndexingRuntimeState::default(),
+        }
     }
 
     fn update(&mut self, message: Self::Input, sender: ComponentSender<Self>) {
         let result = (|| -> anyhow::Result<crate::models::IndexingRunResult> {
-            let mut indexer = SessionIndexer::new(&self.db_path)?;
+            // A fresh indexer (and SQLite connection) per request; retry
+            // state persists only through the explicitly shared context.
+            let mut indexer =
+                SessionIndexer::new_with_state(&self.db_path, self.runtime_state.clone())?;
             match message {
                 IndexingWorkerInput::StartIncremental(sources) => {
                     indexer.index_all_incremental(&sources)

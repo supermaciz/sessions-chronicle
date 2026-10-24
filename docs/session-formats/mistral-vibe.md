@@ -185,6 +185,19 @@ projection operations; a stability check guards the read against publication
 while Vibe is writing. The reader does not acquire Vibe leases or locks and
 never writes to the source store.
 
+An unstable read is retried on a later indexing pass: the first pass of a
+consecutive unstable sequence is deferred quietly, and an indexing diagnostic
+is reported from the second consecutive unstable pass onward. Only strictly
+consecutive unstable outcomes accumulate. Any other observed outcome for the
+session path — a successful index, a current-signature skip, a same-ID
+collision, a corruption/unsupported/missing-`CURRENT` diagnostic, or a
+confirmed deletion — breaks the sequence, so the next unstable pass is deferred
+again as a new first occurrence. These transient counters live in an explicit
+in-memory indexing context tied to one database (retained by the indexing
+worker across indexer recreations, cleared only by a committed full clear, and
+reset by an application restart); they are never persisted and never shared
+across independently created indexer contexts.
+
 The byte-level integrity rules are pinned in plan facts **C** and **E**. For
 the projection/runtime documents and pooled chunk documents, the reader hashes
 the raw stored bytes after removing exactly one required final LF; it does not
