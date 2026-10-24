@@ -950,6 +950,7 @@ mod tests {
         assert!(parsed.tool_calls.is_empty());
     }
 }
+mod swarm;
 mod text;
 
 use anyhow::{Context, Result, bail};
