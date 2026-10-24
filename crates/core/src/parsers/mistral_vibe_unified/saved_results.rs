@@ -236,7 +236,7 @@ mod tests {
         (temp, dir)
     }
 
-    fn write_saved(dir: &std::path::Path, name: &str, content: &str) {
+    fn write_saved(dir: &Path, name: &str, content: &str) {
         fs::write(dir.join(name), content).unwrap();
     }
 
@@ -282,7 +282,7 @@ mod tests {
         let metadata = fs::symlink_metadata(dir.join("saved.json")).unwrap();
         assert_eq!(
             consumed[0].1.mtime_ns,
-            metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec() as i64
+            metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec()
         );
         let _ = temp;
     }

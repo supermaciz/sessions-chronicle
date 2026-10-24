@@ -4,7 +4,7 @@
 //! The converter walks the projection entries in history order, mapping
 //! messages, reasoning and checkpoints per the pinned upstream facts G-I.
 //! Effect entries and skill payload blocks are routed through the effect
-//! sink ([`super::effects::EffectSink`]), which maps them to tool-call,
+//! sink ([`effects::EffectSink`]), which maps them to tool-call,
 //! saved-result and subagent rows (facts H, I, K).
 
 use std::fs;
