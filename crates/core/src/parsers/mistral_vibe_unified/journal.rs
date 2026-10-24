@@ -454,7 +454,7 @@ mod tests {
     use crate::parsers::mistral_vibe_unified::load_stable;
     use crate::parsers::mistral_vibe_unified::store::load_generation;
     use crate::parsers::mistral_vibe_unified::store::test_support::{
-        copy_fixture, rewrite_journal_record,
+        copy_fixture, error_variant, rewrite_journal_record,
     };
     use serde_json::json;
     use std::cell::Cell;
@@ -496,21 +496,6 @@ mod tests {
             expected,
             "replay failed with the wrong variant: {error}"
         );
-    }
-
-    fn error_variant(error: &UnifiedError) -> &'static str {
-        match error {
-            UnifiedError::NoUserMessages => "NoUserMessages",
-            UnifiedError::Ephemeral => "Ephemeral",
-            UnifiedError::DeletingTree { .. } => "DeletingTree",
-            UnifiedError::Unsupported(_) => "Unsupported",
-            UnifiedError::Corrupt(_) => "Corrupt",
-            UnifiedError::Incomplete(_) => "Incomplete",
-            UnifiedError::IdentityConflict(_) => "IdentityConflict",
-            UnifiedError::Unstable(_) => "Unstable",
-            UnifiedError::MissingSavedResult(_) => "MissingSavedResult",
-            UnifiedError::Io(_) => "Io",
-        }
     }
 
     fn read_pointer(session_dir: &Path) -> Value {

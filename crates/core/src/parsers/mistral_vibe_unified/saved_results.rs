@@ -217,6 +217,7 @@ mod test_hooks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parsers::mistral_vibe_unified::store::test_support::error_variant;
     use std::fs;
     use std::os::unix::fs::MetadataExt;
     use tempfile::TempDir;
@@ -237,21 +238,6 @@ mod tests {
 
     fn write_saved(dir: &std::path::Path, name: &str, content: &str) {
         fs::write(dir.join(name), content).unwrap();
-    }
-
-    fn error_variant(error: &UnifiedError) -> &'static str {
-        match error {
-            UnifiedError::NoUserMessages => "NoUserMessages",
-            UnifiedError::Ephemeral => "Ephemeral",
-            UnifiedError::DeletingTree { .. } => "DeletingTree",
-            UnifiedError::Unsupported(_) => "Unsupported",
-            UnifiedError::Corrupt(_) => "Corrupt",
-            UnifiedError::Incomplete(_) => "Incomplete",
-            UnifiedError::IdentityConflict(_) => "IdentityConflict",
-            UnifiedError::Unstable(_) => "Unstable",
-            UnifiedError::MissingSavedResult(_) => "MissingSavedResult",
-            UnifiedError::Io(_) => "Io",
-        }
     }
 
     #[test]

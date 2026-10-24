@@ -879,10 +879,18 @@ pub(crate) mod test_support {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use tempfile::TempDir;
 
+    use super::{FileSample, Identity, LoadedStore, ProjectionState, RuntimeView};
+    use crate::parsers::ParsedSession;
     use crate::parsers::mistral_vibe_unified::canonical::{canonical_json, sha256_hex};
+    use crate::parsers::mistral_vibe_unified::convert::convert;
+    use crate::parsers::mistral_vibe_unified::effects::EffectSink;
+    use crate::parsers::mistral_vibe_unified::saved_results::SavedResultResolver;
+    use crate::parsers::mistral_vibe_unified::{
+        MistralVibeUnifiedParser, UnifiedError, UnifiedParse,
+    };
 
     /// Recursively copies a directory tree (like the Kimi indexer tests'
     /// `copy_dir`).
@@ -1105,11 +1113,121 @@ pub(crate) mod test_support {
         assert_eq!(raw.last(), Some(&b'\n'), "{what} must end with a newline");
         &raw[..raw.len() - 1]
     }
+
+    /// Stable variant name, so tests can assert on the failure class
+    /// without matching on payloads.
+    pub(crate) fn error_variant(error: &UnifiedError) -> &'static str {
+        match error {
+            UnifiedError::NoUserMessages => "NoUserMessages",
+            UnifiedError::Ephemeral => "Ephemeral",
+            UnifiedError::DeletingTree { .. } => "DeletingTree",
+            UnifiedError::Unsupported(_) => "Unsupported",
+            UnifiedError::Corrupt(_) => "Corrupt",
+            UnifiedError::Incomplete(_) => "Incomplete",
+            UnifiedError::IdentityConflict(_) => "IdentityConflict",
+            UnifiedError::Unstable(_) => "Unstable",
+            UnifiedError::MissingSavedResult(_) => "MissingSavedResult",
+            UnifiedError::Io(_) => "Io",
+        }
+    }
+
+    pub(crate) fn unified_rel(id: &str) -> String {
+        format!("vibe_sessions/unified/{id}")
+    }
+
+    pub(crate) fn variant_rel(name: &str, id: &str) -> String {
+        format!("vibe_unified_variants/{name}/unified/{id}")
+    }
+
+    pub(crate) fn parse_fixture(rel: &str) -> Result<UnifiedParse, UnifiedError> {
+        MistralVibeUnifiedParser.parse(&crate::fixture_path(rel))
+    }
+
+    /// Copies a Unified fixture store into a temp directory, keeping the
+    /// session directory name the store's identity requires.
+    pub(crate) fn copy_unified(id: &str) -> (TempDir, PathBuf) {
+        let temp = copy_fixture(&unified_rel(id));
+        let session = temp.path().join(id);
+        (temp, session)
+    }
+
+    // ------------------------------------------------------------------
+    // In-memory conversion harness: entries built as JSON values, a
+    // synthetic runtime whose cwd/model satisfy the metadata rules, and a
+    // session directory path that is never touched on disk.
+    // ------------------------------------------------------------------
+
+    pub(crate) const T0_MS: i64 = 1_792_700_000_000;
+    pub(crate) const IN_MEMORY: &str = "in-memory";
+
+    pub(crate) fn in_memory_session_dir() -> PathBuf {
+        PathBuf::from("/home/fixture/.vibe/logs/session/unified").join(IN_MEMORY)
+    }
+
+    pub(crate) fn in_memory_store(entries: Vec<Value>) -> LoadedStore {
+        LoadedStore {
+            current_bytes: b"{}\n".to_vec(),
+            journal_first_sequence: 2,
+            meta: None,
+            journal: FileSample {
+                relative_path: "journal/0000000000000002.jsonl".to_string(),
+                size: 0,
+                mtime_ns: 0,
+                dev: 0,
+                ino: 0,
+            },
+            runtime: RuntimeView {
+                session_id: IN_MEMORY.to_string(),
+                root_session_id: IN_MEMORY.to_string(),
+                parent_session_id: None,
+                ephemeral: false,
+                identity: Identity::Root,
+                cwd: Some("/home/fixture/projects/original".to_string()),
+                active_model: Some("mistral-large-4".to_string()),
+                deleting_children: None,
+            },
+            projection: ProjectionState {
+                envelope: json!({
+                    "format": "harness.public-session-state/v1",
+                    "session": {
+                        "id": IN_MEMORY,
+                        "rootSessionId": IN_MEMORY,
+                        "parentSessionId": null,
+                        "title": "In memory",
+                        "status": {"type": "idle"},
+                        "createdAt": T0_MS,
+                        "updatedAt": T0_MS,
+                        "tokenUsage": {
+                            "inputTokens": 1,
+                            "outputTokens": 2,
+                            "totalTokens": 3,
+                            "cachedInputTokens": 0
+                        },
+                        "contextUsage": null,
+                    },
+                    "latestTurn": null,
+                    "history": {"entries": []},
+                }),
+                entries,
+                watermark: 1,
+            },
+        }
+    }
+
+    pub(crate) fn convert_entries(entries: Vec<Value>) -> Result<ParsedSession, UnifiedError> {
+        let store = in_memory_store(entries);
+        let session_dir = in_memory_session_dir();
+        let mut results = SavedResultResolver::new(session_dir.join("tool-results"));
+        let mut effects = EffectSink::new(IN_MEMORY, &mut results);
+        convert(&session_dir, &store, &mut effects)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{copy_fixture, copy_tree, rewrite_document, rewrite_journal_record};
+    use super::test_support::{
+        copy_fixture, copy_tree, error_variant, rewrite_document, rewrite_journal_record,
+    };
     use super::*;
     use crate::parsers::mistral_vibe_unified::canonical::canonical_json;
     use serde_json::json;
@@ -1147,21 +1265,6 @@ mod tests {
             expected,
             "load failed with the wrong variant: {error}"
         );
-    }
-
-    fn error_variant(error: &UnifiedError) -> &'static str {
-        match error {
-            UnifiedError::NoUserMessages => "NoUserMessages",
-            UnifiedError::Ephemeral => "Ephemeral",
-            UnifiedError::DeletingTree { .. } => "DeletingTree",
-            UnifiedError::Unsupported(_) => "Unsupported",
-            UnifiedError::Corrupt(_) => "Corrupt",
-            UnifiedError::Incomplete(_) => "Incomplete",
-            UnifiedError::IdentityConflict(_) => "IdentityConflict",
-            UnifiedError::Unstable(_) => "Unstable",
-            UnifiedError::MissingSavedResult(_) => "MissingSavedResult",
-            UnifiedError::Io(_) => "Io",
-        }
     }
 
     fn read_pointer(session_dir: &Path) -> Value {

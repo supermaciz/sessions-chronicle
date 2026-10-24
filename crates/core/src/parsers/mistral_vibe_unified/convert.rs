@@ -774,14 +774,12 @@ fn read_meta_json(session_dir: &Path, session_id: &str) -> Option<Value> {
 mod tests {
     use super::*;
     use crate::models::ToolCallStatus;
-    use crate::parsers::mistral_vibe_unified::store::{
-        FileSample, ProjectionState, RuntimeView,
-        test_support::{copy_fixture, rewrite_document},
+    use crate::parsers::mistral_vibe_unified::store::test_support::{
+        IN_MEMORY, T0_MS, convert_entries, copy_unified, error_variant, parse_fixture,
+        rewrite_document, unified_rel, variant_rel,
     };
     use crate::parsers::mistral_vibe_unified::{child_session_id, effects::EffectSink};
     use serde_json::json;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
 
     // Fixture IDs (Task 2 contract; the child ID matches the generated
     // fixture directory).
@@ -789,7 +787,6 @@ mod tests {
     const R300: &str = "aaaaaaaa-0000-4000-8000-000000000300";
     const F301: &str = "aaaaaaaa-0000-4000-8000-000000000301";
     const CHILD_A: &str = "child-ea9b00b3ad4061f4ca36fd81";
-    const T0_MS: i64 = 1_792_700_000_000;
 
     // Variant store IDs (Task 2 generator contract).
     const V_EPHEMERAL: &str = "cccccccc-0000-4000-8000-000000000001";
@@ -798,26 +795,6 @@ mod tests {
     const V_UNKNOWN_CHECKPOINT: &str = "cccccccc-0000-4000-8000-000000000008";
     const V_EMPTY: &str = "cccccccc-0000-4000-8000-00000000000b";
     const V_RECOVERED: &str = "cccccccc-0000-4000-8000-00000000000c";
-
-    fn unified_rel(id: &str) -> String {
-        format!("vibe_sessions/unified/{id}")
-    }
-
-    fn variant_rel(name: &str, id: &str) -> String {
-        format!("vibe_unified_variants/{name}/unified/{id}")
-    }
-
-    fn parse_fixture(rel: &str) -> Result<UnifiedParse, UnifiedError> {
-        MistralVibeUnifiedParser.parse(&crate::fixture_path(rel))
-    }
-
-    /// Copies a Unified fixture store into a temp directory, keeping the
-    /// session directory name the store's identity requires.
-    fn copy_unified(id: &str) -> (TempDir, PathBuf) {
-        let temp = copy_fixture(&unified_rel(id));
-        let session = temp.path().join(id);
-        (temp, session)
-    }
 
     fn metadata_change_after_consumption(initial: Option<&str>) {
         let (_temp, dir) = copy_unified(R300);
@@ -885,18 +862,7 @@ mod tests {
 
     fn expect_variant(result: Result<UnifiedParse, UnifiedError>, expected: &str) {
         let error = result.expect_err("expected the parse to fail");
-        let actual = match &error {
-            UnifiedError::NoUserMessages => "NoUserMessages",
-            UnifiedError::Ephemeral => "Ephemeral",
-            UnifiedError::DeletingTree { .. } => "DeletingTree",
-            UnifiedError::Unsupported(_) => "Unsupported",
-            UnifiedError::Corrupt(_) => "Corrupt",
-            UnifiedError::Incomplete(_) => "Incomplete",
-            UnifiedError::IdentityConflict(_) => "IdentityConflict",
-            UnifiedError::Unstable(_) => "Unstable",
-            UnifiedError::MissingSavedResult(_) => "MissingSavedResult",
-            UnifiedError::Io(_) => "Io",
-        };
+        let actual = error_variant(&error);
         assert_eq!(
             actual, expected,
             "parse failed with the wrong variant: {error}"
@@ -908,70 +874,6 @@ mod tests {
     // synthetic runtime whose cwd/model satisfy the metadata rules, and a
     // session directory path that is never touched on disk.
     // ------------------------------------------------------------------
-
-    const IN_MEMORY_SESSION: &str = "in-memory";
-
-    fn in_memory_session_dir() -> PathBuf {
-        PathBuf::from("/home/fixture/.vibe/logs/session/unified").join(IN_MEMORY_SESSION)
-    }
-
-    fn in_memory_store(entries: Vec<Value>) -> LoadedStore {
-        LoadedStore {
-            current_bytes: b"{}\n".to_vec(),
-            journal_first_sequence: 2,
-            meta: None,
-            journal: FileSample {
-                relative_path: "journal/0000000000000002.jsonl".to_string(),
-                size: 0,
-                mtime_ns: 0,
-                dev: 0,
-                ino: 0,
-            },
-            runtime: RuntimeView {
-                session_id: IN_MEMORY_SESSION.to_string(),
-                root_session_id: IN_MEMORY_SESSION.to_string(),
-                parent_session_id: None,
-                ephemeral: false,
-                identity: Identity::Root,
-                cwd: Some("/home/fixture/projects/original".to_string()),
-                active_model: Some("mistral-large-4".to_string()),
-                deleting_children: None,
-            },
-            projection: ProjectionState {
-                envelope: json!({
-                    "format": "harness.public-session-state/v1",
-                    "session": {
-                        "id": IN_MEMORY_SESSION,
-                        "rootSessionId": IN_MEMORY_SESSION,
-                        "parentSessionId": null,
-                        "title": "In memory",
-                        "status": {"type": "idle"},
-                        "createdAt": T0_MS,
-                        "updatedAt": T0_MS,
-                        "tokenUsage": {
-                            "inputTokens": 1,
-                            "outputTokens": 2,
-                            "totalTokens": 3,
-                            "cachedInputTokens": 0
-                        },
-                        "contextUsage": null,
-                    },
-                    "latestTurn": null,
-                    "history": {"entries": []},
-                }),
-                entries,
-                watermark: 1,
-            },
-        }
-    }
-
-    fn convert_entries(entries: Vec<Value>) -> Result<ParsedSession, UnifiedError> {
-        let store = in_memory_store(entries);
-        let session_dir = in_memory_session_dir();
-        let mut results = SavedResultResolver::new(session_dir.join("tool-results"));
-        let mut effects = EffectSink::new(IN_MEMORY_SESSION, &mut results);
-        convert(&session_dir, &store, &mut effects)
-    }
 
     fn user_message(id: &str, blocks: Value) -> Value {
         json!({
@@ -1347,11 +1249,11 @@ mod tests {
         assert_eq!(names, ["skill", "skill"]);
         assert_eq!(
             parsed.tool_calls[0].id,
-            format!("{IN_MEMORY_SESSION}-u1:invoked-skill:vibe-skill")
+            format!("{IN_MEMORY}-u1:invoked-skill:vibe-skill")
         );
         assert_eq!(
             parsed.tool_calls[1].id,
-            format!("{IN_MEMORY_SESSION}-u1:invoked-skill:other-skill")
+            format!("{IN_MEMORY}-u1:invoked-skill:other-skill")
         );
         assert_eq!(
             parsed.tool_calls[0].input_json.as_deref(),
