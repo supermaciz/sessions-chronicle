@@ -295,7 +295,7 @@ checksum = "f8b4985713047f5faee02b8db6a6ef32bbb50269ff53c1aee716d1d195b76d54"
 dependencies = [
  "glib-sys",
  "libc",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -705,7 +705,7 @@ dependencies = [
  "glib-sys",
  "gobject-sys",
  "libc",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -737,7 +737,7 @@ dependencies = [
  "libc",
  "pango-sys",
  "pkg-config",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -814,14 +814,14 @@ dependencies = [
 
 [[package]]
 name = "gio-sys"
-version = "0.22.0"
+version = "0.22.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64729ba2772c080448f9f966dba8f4456beeb100d8c28a865ef8a0f2ef4987e1"
+checksum = "6c28739f914c15b87a9856000bed9cbd5b3a8afbca5e982d9a299e1601422cb5"
 dependencies = [
  "glib-sys",
  "gobject-sys",
  "libc",
- "system-deps",
+ "system-deps 9.0.1",
  "windows-sys",
 ]
 
@@ -865,7 +865,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f7fbac234ed5bc2a28359b7bde8e1b9cdf1441cc2d7f068e4824672d7db9445"
 dependencies = [
  "libc",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -876,7 +876,7 @@ checksum = "22a861859b887a79cf461359c192c97a57d8fb0229dd291232e57aa11f6fa72c"
 dependencies = [
  "glib-sys",
  "libc",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -899,7 +899,7 @@ dependencies = [
  "glib-sys",
  "libc",
  "pkg-config",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -930,7 +930,7 @@ dependencies = [
  "graphene-sys",
  "libc",
  "pango-sys",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -982,7 +982,7 @@ dependencies = [
  "gsk4-sys",
  "libc",
  "pango-sys",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -1145,7 +1145,7 @@ dependencies = [
  "gtk4-sys",
  "libc",
  "pango-sys",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -1332,7 +1332,7 @@ dependencies = [
  "glib-sys",
  "gobject-sys",
  "libc",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -1360,9 +1360,9 @@ dependencies = [
 
 [[package]]
 name = "pkg-config"
-version = "0.3.32"
+version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "polling"
@@ -1810,7 +1810,7 @@ dependencies = [
  "gtk4-sys",
  "libc",
  "pango-sys",
- "system-deps",
+ "system-deps 7.0.7",
 ]
 
 [[package]]
@@ -1873,6 +1873,19 @@ dependencies = [
  "heck",
  "pkg-config",
  "toml 0.9.10+spec-1.1.0",
+ "version-compare",
+]
+
+[[package]]
+name = "system-deps"
+version = "9.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db551ad38aac61d5e0343e0eeeb0163be3115c4e23b6a025959570ee0c03c67d"
+dependencies = [
+ "cfg-expr",
+ "heck",
+ "pkg-config",
+ "toml 1.1.2+spec-1.1.0",
  "version-compare",
 ]
 
