@@ -1,0 +1,320 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="2080" viewBox="0 0 1100 2080">
+  <defs>
+    <style>
+      text { font-family: Cantarell, "Inter", system-ui, sans-serif; }
+      .mono { font-family: "Source Code Pro", "DejaVu Sans Mono", monospace; }
+    </style>
+    <filter id="pop" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#000000" flood-opacity="0.18"/>
+    </filter>
+    <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="6" height="6" fill="#deddda"/>
+      <rect width="2" height="6" fill="#9a9996"/>
+    </pattern>
+  </defs>
+  <rect width="1100" height="2080" fill="#e8e8ea"/>
+<text x="10" y="34" font-size="18" fill="#1e1e1e" font-weight="700">Proposal 2 — Model runs (Mii Beta)</text><text x="10" y="56" font-size="12" fill="#77767b">Model = session state that changes now and then. One chip in the summary, one marker per change. Per-message labels kept.</text>
+<text x="10" y="80" font-size="12" fill="#2e3436" font-weight="700">A  Parent session — summary popover (two models)</text>
+<defs><clipPath id="clip92"><rect x="10" y="92" width="1080" height="526" rx="12"/></clipPath></defs>
+<rect x="10" y="92" width="1080" height="526" rx="12" fill="#fafafb"/><rect x="10.5" y="92.5" width="1079" height="525" rx="12" fill="none" stroke="#d0d0d4"/>
+<g clip-path="url(#clip92)">
+<g opacity="0.55">
+<rect x="26" y="152" width="1048" height="56" rx="6" fill="#f6f6f7"/><rect x="26" y="152" width="3" height="56" rx="1" fill="#26a269"/>
+<text x="42" y="172" font-size="11" xml:space="preserve"><tspan fill="#26a269">Assistant</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b" class="mono">claude-opus-4-7</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b">14:32:05</tspan></text><rect x="275.5" y="160" width="126.0" height="17" rx="8.5" fill="#ebebed"/><text x="283.5" y="172" font-size="11" fill="#77767b">Thinking (encrypted)</text>
+<text x="42" y="194" font-size="13" fill="#2e3436">I'll read the parser and its fixtures first, then add the model column to the subagent table.</text>
+<rect x="26" y="218" width="1048" height="38" rx="6" fill="#f6f6f7"/><rect x="26" y="218" width="3" height="38" rx="1" fill="#e66100"/>
+<path d="M 44 233 l 4 4 l -4 4" fill="none" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="60" y="232" width="11" height="9" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="78" y="241" font-size="12" fill="#1e1e1e" font-weight="700">3 Read</text>
+<text x="124.0" y="241" font-size="11" fill="#77767b">5 tool calls</text>
+<rect x="26" y="266" width="1048" height="56" rx="6" fill="#f6f6f7"/><rect x="26" y="266" width="3" height="56" rx="1" fill="#26a269"/>
+<text x="42" y="286" font-size="11" xml:space="preserve"><tspan fill="#26a269">Assistant</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b" class="mono">claude-sonnet-4-6</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b">15:09:41</tspan></text>
+<text x="42" y="308" font-size="13" fill="#2e3436">All three audits are back; two fixtures need regenerating.</text>
+<rect x="26" y="332" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="332" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="344" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="354" font-size="13" fill="#1e1e1e" class="mono">Read</text>
+<text x="103.2" y="354" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="376" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="376" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="388" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="398" font-size="13" fill="#1e1e1e" class="mono">Edit</text>
+<text x="103.2" y="398" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="420" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="420" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="432" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="442" font-size="13" fill="#1e1e1e" class="mono">Bash</text>
+<text x="103.2" y="442" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="464" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="464" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="476" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="486" font-size="13" fill="#1e1e1e" class="mono">Grep</text>
+<text x="103.2" y="486" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="508" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="508" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="520" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="530" font-size="13" fill="#1e1e1e" class="mono">Read</text>
+<text x="103.2" y="530" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="552" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="552" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="564" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="574" font-size="13" fill="#1e1e1e" class="mono">Bash</text>
+<text x="103.2" y="574" font-size="11" fill="#26a269">Completed</text>
+</g>
+<rect x="10" y="92" width="1080" height="46" fill="#ffffff"/>
+<rect x="10" y="138" width="1080" height="1" fill="#e3e3e6"/>
+<path d="M 32 109 L 26 115 L 32 121" fill="none" stroke="#2e3436" stroke-width="2"/>
+<path d="M 51 108 h 8 M 53 108 v 6 l -3 3 h 10 l -3 -3 v -6 M 55 117 v 6" fill="none" stroke="#2e3436" stroke-width="1.6"/>
+<circle cx="80" cy="114" r="5" fill="none" stroke="#2e3436" stroke-width="1.8"/><path d="M 84 118 l 4 4" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="100" y="100" width="181.0" height="30" rx="7" fill="#dededf"/>
+<rect x="110" y="109" width="13" height="11" rx="2" fill="none" stroke="#2e3436" stroke-width="1.4"/>
+<text x="131" y="120" font-size="13" fill="#1e1e1e" font-weight="700">sessions-chronicle</text>
+<path d="M 254.0 113 l 4 4 l 4 -4" fill="none" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="458.0" y="100" width="86" height="30" rx="7" fill="#dededf"/>
+<circle cx="474.0" cy="115" r="6" fill="none" stroke="#2e3436" stroke-width="1.5"/>
+<text x="486.0" y="120" font-size="13" fill="#1e1e1e" font-weight="700">Sessions</text>
+<path d="M 558.0 121 l 4 -6 l 4 3 l 5 -8" fill="none" stroke="#2e3436" stroke-width="1.5"/>
+<text x="578.0" y="120" font-size="13" fill="#1e1e1e" font-weight="700">Analytics</text>
+<path d="M 940 110 h 12 M 940 115 h 12 M 940 120 h 12" stroke="#2e3436" stroke-width="1.6"/>
+<rect x="966" y="109" width="14" height="12" rx="2" fill="none" stroke="#2e3436" stroke-width="1.5"/><rect x="973" y="109" width="7" height="12" fill="#2e3436"/>
+<rect x="990" y="100" width="64" height="30" rx="7" fill="#3584e4"/>
+<text x="1022" y="120" font-size="13" fill="#ffffff" font-weight="700" text-anchor="middle">Resume</text>
+<circle cx="1072" cy="115" r="10" fill="#dededf"/><path d="M 1068 111 l 8 8 M 1076 111 l -8 8" stroke="#2e3436" stroke-width="1.6"/>
+<g filter="url(#pop)"><rect x="20" y="153" width="500" height="441" rx="12" fill="#ffffff"/><path d="M 181.5 154 L 190.5 145 L 199.5 154 Z" fill="#ffffff"/></g>
+<text x="40" y="193" font-size="17" fill="#1e1e1e" font-weight="700">sessions-chronicle</text>
+<text x="40" y="217" font-size="12" fill="#77767b">/home/mcizo/Projets/sessions-chronicle</text>
+<text x="40" y="241" font-size="12" fill="#77767b">Session ID:</text>
+<text x="116" y="241" font-size="12" fill="#2e3436" class="mono">7f3c1e52-9a0b-4d61-b8e2-31c4a07d9e18</text>
+<circle cx="56" cy="265" r="6" fill="none" stroke="#2e3436" stroke-width="1.4"/>
+<text x="68" y="269" font-size="12" fill="#2e3436">Claude Code</text>
+<text x="175.0" y="269" font-size="12" fill="#2e3436">47m</text>
+<text x="280.0" y="269" font-size="12" fill="#2e3436">38 messages</text>
+<text x="391.0" y="269" font-size="12" fill="#26a269">Ended cleanly</text>
+<rect x="48" y="291" width="12" height="12" rx="2" fill="none" stroke="#2e3436" stroke-width="1.3"/>
+<rect x="51" y="294" width="6" height="6" fill="#2e3436"/>
+<text x="68" y="301" font-size="12" xml:space="preserve"><tspan fill="#2e3436" class="mono">claude-opus-4-7</tspan><tspan fill="#77767b">  then  </tspan><tspan fill="#2e3436" class="mono">claude-sonnet-4-6</tspan></text>
+<circle cx="364.4" cy="297" r="8" fill="#c64600"/>
+<text x="364.4" y="301" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">1</text>
+<rect x="40" y="325" width="460" height="1" fill="#e3e3e6"/>
+<text x="40" y="351" font-size="11" fill="#77767b" font-weight="700" letter-spacing="0.6">FIRST PROMPT</text>
+<text x="40" y="373" font-size="12" fill="#2e3436">Add a model column to the subagent table and backfill it from the</text>
+<text x="40" y="390" font-size="12" fill="#2e3436">existing parsers, then run the full headless test suite.</text>
+<rect x="40" y="416" width="460" height="1" fill="#e3e3e6"/>
+<text x="40" y="442" font-size="11" fill="#77767b" font-weight="700" letter-spacing="0.6">ACTIVITY</text>
+<rect x="40.0" y="454" width="95.2" height="6" fill="#e66100"/>
+<rect x="135.2" y="454" width="222.1" height="6" fill="#26a269"/>
+<rect x="357.2" y="454" width="142.8" height="6" fill="#3584e4"/>
+<rect x="40" y="470" width="7" height="7" fill="#e66100"/>
+<text x="51" y="478" font-size="12" fill="#77767b">6 edits</text>
+<rect x="105.0" y="470" width="7" height="7" fill="#26a269"/>
+<text x="116.0" y="478" font-size="12" fill="#77767b">14 commands</text>
+<rect x="194.0" y="470" width="7" height="7" fill="#3584e4"/>
+<text x="205.0" y="478" font-size="12" fill="#77767b">9 reads</text>
+<rect x="40" y="498" width="460" height="1" fill="#e3e3e6"/>
+<text x="40" y="524" font-size="11" fill="#77767b" font-weight="700" letter-spacing="0.6">TOKENS</text>
+<text x="42.0" y="550" font-size="14" fill="#1e1e1e" font-weight="700">271 412</text>
+<text x="42.0" y="568" font-size="12" fill="#77767b">Input</text>
+<text x="157.0" y="550" font-size="14" fill="#1e1e1e" font-weight="700">2 108</text>
+<text x="157.0" y="568" font-size="12" fill="#77767b">Output</text>
+<text x="272.0" y="550" font-size="14" fill="#1e1e1e" font-weight="700">231 040 read</text>
+<text x="272.0" y="568" font-size="12" fill="#77767b">Cache</text>
+<text x="387.0" y="550" font-size="14" fill="#1e1e1e" font-weight="700">247</text>
+<text x="387.0" y="568" font-size="12" fill="#77767b">Reasoning</text>
+</g>
+<rect x="80" y="316" width="366.0" height="86" rx="6" fill="#303034" opacity="0.94"/>
+<text x="92" y="338" font-size="12" fill="#ffffff">Models attributed in this session, in order of first use:</text>
+<text x="92" y="356" font-size="12" fill="#ffffff">claude-opus-4-7 — 31 entries</text>
+<text x="92" y="374" font-size="12" fill="#ffffff">claude-sonnet-4-6 — 12 entries</text>
+<text x="92" y="392" font-size="12" fill="#ffffff">4 entries have no recorded model</text>
+<text x="10" y="652" font-size="12" fill="#2e3436" font-weight="700">B  Subagent session with tool calls only — the case that triggered this</text>
+<defs><clipPath id="clip664"><rect x="10" y="664" width="1080" height="509" rx="12"/></clipPath></defs>
+<rect x="10" y="664" width="1080" height="509" rx="12" fill="#fafafb"/><rect x="10.5" y="664.5" width="1079" height="508" rx="12" fill="none" stroke="#d0d0d4"/>
+<g clip-path="url(#clip664)">
+<g opacity="0.55">
+<rect x="26" y="724" width="1048" height="56" rx="6" fill="#f6f6f7"/><rect x="26" y="724" width="3" height="56" rx="1" fill="#26a269"/>
+<text x="42" y="744" font-size="11" xml:space="preserve"><tspan fill="#26a269">Assistant</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b" class="mono">claude-opus-4-7</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b">14:32:05</tspan></text><rect x="275.5" y="732" width="126.0" height="17" rx="8.5" fill="#ebebed"/><text x="283.5" y="744" font-size="11" fill="#77767b">Thinking (encrypted)</text>
+<text x="42" y="766" font-size="13" fill="#2e3436">I'll read the parser and its fixtures first, then add the model column to the subagent table.</text>
+<rect x="26" y="790" width="1048" height="38" rx="6" fill="#f6f6f7"/><rect x="26" y="790" width="3" height="38" rx="1" fill="#e66100"/>
+<path d="M 44 805 l 4 4 l -4 4" fill="none" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="60" y="804" width="11" height="9" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="78" y="813" font-size="12" fill="#1e1e1e" font-weight="700">3 Read</text>
+<text x="124.0" y="813" font-size="11" fill="#77767b">5 tool calls</text>
+<rect x="26" y="838" width="1048" height="56" rx="6" fill="#f6f6f7"/><rect x="26" y="838" width="3" height="56" rx="1" fill="#26a269"/>
+<text x="42" y="858" font-size="11" xml:space="preserve"><tspan fill="#26a269">Assistant</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b" class="mono">claude-sonnet-4-6</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b">15:09:41</tspan></text>
+<text x="42" y="880" font-size="13" fill="#2e3436">All three audits are back; two fixtures need regenerating.</text>
+<rect x="26" y="904" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="904" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="916" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="926" font-size="13" fill="#1e1e1e" class="mono">Read</text>
+<text x="103.2" y="926" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="948" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="948" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="960" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="970" font-size="13" fill="#1e1e1e" class="mono">Edit</text>
+<text x="103.2" y="970" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="992" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="992" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="1004" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="1014" font-size="13" fill="#1e1e1e" class="mono">Bash</text>
+<text x="103.2" y="1014" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="1036" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="1036" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="1048" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="1058" font-size="13" fill="#1e1e1e" class="mono">Grep</text>
+<text x="103.2" y="1058" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="1080" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="1080" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="1092" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="1102" font-size="13" fill="#1e1e1e" class="mono">Read</text>
+<text x="103.2" y="1102" font-size="11" fill="#26a269">Completed</text>
+<rect x="26" y="1124" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="1124" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="1136" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="1146" font-size="13" fill="#1e1e1e" class="mono">Bash</text>
+<text x="103.2" y="1146" font-size="11" fill="#26a269">Completed</text>
+</g>
+<rect x="10" y="664" width="1080" height="46" fill="#ffffff"/>
+<rect x="10" y="710" width="1080" height="1" fill="#e3e3e6"/>
+<path d="M 32 681 L 26 687 L 32 693" fill="none" stroke="#2e3436" stroke-width="2"/>
+<path d="M 51 680 h 8 M 53 680 v 6 l -3 3 h 10 l -3 -3 v -6 M 55 689 v 6" fill="none" stroke="#2e3436" stroke-width="1.6"/>
+<circle cx="80" cy="686" r="5" fill="none" stroke="#2e3436" stroke-width="1.8"/><path d="M 84 690 l 4 4" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="100" y="672" width="181.0" height="30" rx="7" fill="#dededf"/>
+<rect x="110" y="681" width="13" height="11" rx="2" fill="none" stroke="#2e3436" stroke-width="1.4"/>
+<text x="131" y="692" font-size="13" fill="#1e1e1e" font-weight="700">sessions-chronicle</text>
+<path d="M 254.0 685 l 4 4 l 4 -4" fill="none" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="458.0" y="672" width="86" height="30" rx="7" fill="#dededf"/>
+<circle cx="474.0" cy="687" r="6" fill="none" stroke="#2e3436" stroke-width="1.5"/>
+<text x="486.0" y="692" font-size="13" fill="#1e1e1e" font-weight="700">Sessions</text>
+<path d="M 558.0 693 l 4 -6 l 4 3 l 5 -8" fill="none" stroke="#2e3436" stroke-width="1.5"/>
+<text x="578.0" y="692" font-size="13" fill="#1e1e1e" font-weight="700">Analytics</text>
+<path d="M 940 682 h 12 M 940 687 h 12 M 940 692 h 12" stroke="#2e3436" stroke-width="1.6"/>
+<rect x="966" y="681" width="14" height="12" rx="2" fill="none" stroke="#2e3436" stroke-width="1.5"/><rect x="973" y="681" width="7" height="12" fill="#2e3436"/>
+<rect x="990" y="672" width="64" height="30" rx="7" fill="#3584e4"/>
+<text x="1022" y="692" font-size="13" fill="#ffffff" font-weight="700" text-anchor="middle">Resume</text>
+<circle cx="1072" cy="687" r="10" fill="#dededf"/><path d="M 1068 683 l 8 8 M 1076 683 l -8 8" stroke="#2e3436" stroke-width="1.6"/>
+<g filter="url(#pop)"><rect x="20" y="725" width="500" height="424" rx="12" fill="#ffffff"/><path d="M 181.5 726 L 190.5 717 L 199.5 726 Z" fill="#ffffff"/></g>
+<text x="40" y="765" font-size="17" fill="#1e1e1e" font-weight="700">sessions-chronicle</text>
+<text x="40" y="789" font-size="12" fill="#77767b">/home/mcizo/Projets/sessions-chronicle</text>
+<text x="40" y="813" font-size="12" fill="#77767b">Session ID:</text>
+<text x="116" y="813" font-size="12" fill="#2e3436" class="mono">agent-a91c03f7</text>
+<circle cx="56" cy="837" r="6" fill="none" stroke="#2e3436" stroke-width="1.4"/>
+<text x="68" y="841" font-size="12" fill="#2e3436">Claude Code</text>
+<text x="175.0" y="841" font-size="12" fill="#2e3436">4m</text>
+<text x="280.0" y="841" font-size="12" fill="#2e3436">0 messages</text>
+<text x="391.0" y="841" font-size="12" fill="#26a269">Ended cleanly</text>
+<rect x="48" y="863" width="12" height="12" rx="2" fill="none" stroke="#2e3436" stroke-width="1.3"/>
+<rect x="51" y="866" width="6" height="6" fill="#2e3436"/>
+<text x="68" y="873" font-size="12" xml:space="preserve"><tspan fill="#2e3436" class="mono">claude-haiku-4-5</tspan></text>
+<circle cx="201.2" cy="869" r="8" fill="#c64600"/>
+<text x="201.2" y="873" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">2</text>
+<rect x="40" y="897" width="460" height="1" fill="#e3e3e6"/>
+<text x="40" y="923" font-size="11" fill="#77767b" font-weight="700" letter-spacing="0.6">FIRST PROMPT</text>
+<text x="40" y="945" font-size="12" fill="#2e3436">Audit the parser fixtures and list the ones missing a model field.</text>
+<rect x="40" y="971" width="460" height="1" fill="#e3e3e6"/>
+<text x="40" y="997" font-size="11" fill="#77767b" font-weight="700" letter-spacing="0.6">ACTIVITY</text>
+<rect x="40.0" y="1009" width="361.4" height="6" fill="#3584e4"/>
+<rect x="401.4" y="1009" width="98.6" height="6" fill="#26a269"/>
+<rect x="40" y="1025" width="7" height="7" fill="#3584e4"/>
+<text x="51" y="1033" font-size="12" fill="#77767b">11 reads</text>
+<rect x="111.0" y="1025" width="7" height="7" fill="#26a269"/>
+<text x="122.0" y="1033" font-size="12" fill="#77767b">3 commands</text>
+<rect x="40" y="1053" width="460" height="1" fill="#e3e3e6"/>
+<text x="40" y="1079" font-size="11" fill="#77767b" font-weight="700" letter-spacing="0.6">TOKENS</text>
+<text x="42.0" y="1105" font-size="14" fill="#1e1e1e" font-weight="700">271 412</text>
+<text x="42.0" y="1123" font-size="12" fill="#77767b">Input</text>
+<text x="157.0" y="1105" font-size="14" fill="#1e1e1e" font-weight="700">2 108</text>
+<text x="157.0" y="1123" font-size="12" fill="#77767b">Output</text>
+<text x="272.0" y="1105" font-size="14" fill="#1e1e1e" font-weight="700">231 040 read</text>
+<text x="272.0" y="1123" font-size="12" fill="#77767b">Cache</text>
+<text x="387.0" y="1105" font-size="14" fill="#1e1e1e" font-weight="700">247</text>
+<text x="387.0" y="1123" font-size="12" fill="#77767b">Reasoning</text>
+</g>
+<text x="10" y="1207" font-size="12" fill="#2e3436" font-weight="700">C  Parent transcript — popover closed</text>
+<defs><clipPath id="clip1219"><rect x="10" y="1219" width="1080" height="651" rx="12"/></clipPath></defs>
+<rect x="10" y="1219" width="1080" height="651" rx="12" fill="#fafafb"/><rect x="10.5" y="1219.5" width="1079" height="650" rx="12" fill="none" stroke="#d0d0d4"/>
+<g clip-path="url(#clip1219)">
+<rect x="10" y="1219" width="1080" height="46" fill="#ffffff"/>
+<rect x="10" y="1265" width="1080" height="1" fill="#e3e3e6"/>
+<path d="M 32 1236 L 26 1242 L 32 1248" fill="none" stroke="#2e3436" stroke-width="2"/>
+<path d="M 51 1235 h 8 M 53 1235 v 6 l -3 3 h 10 l -3 -3 v -6 M 55 1244 v 6" fill="none" stroke="#2e3436" stroke-width="1.6"/>
+<circle cx="80" cy="1241" r="5" fill="none" stroke="#2e3436" stroke-width="1.8"/><path d="M 84 1245 l 4 4" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="100" y="1227" width="181.0" height="30" rx="7" fill="#dededf"/>
+<rect x="110" y="1236" width="13" height="11" rx="2" fill="none" stroke="#2e3436" stroke-width="1.4"/>
+<text x="131" y="1247" font-size="13" fill="#1e1e1e" font-weight="700">sessions-chronicle</text>
+<path d="M 254.0 1240 l 4 4 l 4 -4" fill="none" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="458.0" y="1227" width="86" height="30" rx="7" fill="#dededf"/>
+<circle cx="474.0" cy="1242" r="6" fill="none" stroke="#2e3436" stroke-width="1.5"/>
+<text x="486.0" y="1247" font-size="13" fill="#1e1e1e" font-weight="700">Sessions</text>
+<path d="M 558.0 1248 l 4 -6 l 4 3 l 5 -8" fill="none" stroke="#2e3436" stroke-width="1.5"/>
+<text x="578.0" y="1247" font-size="13" fill="#1e1e1e" font-weight="700">Analytics</text>
+<path d="M 940 1237 h 12 M 940 1242 h 12 M 940 1247 h 12" stroke="#2e3436" stroke-width="1.6"/>
+<rect x="966" y="1236" width="14" height="12" rx="2" fill="none" stroke="#2e3436" stroke-width="1.5"/><rect x="973" y="1236" width="7" height="12" fill="#2e3436"/>
+<rect x="990" y="1227" width="64" height="30" rx="7" fill="#3584e4"/>
+<text x="1022" y="1247" font-size="13" fill="#ffffff" font-weight="700" text-anchor="middle">Resume</text>
+<circle cx="1072" cy="1242" r="10" fill="#dededf"/><path d="M 1068 1238 l 8 8 M 1076 1238 l -8 8" stroke="#2e3436" stroke-width="1.6"/>
+<rect x="26" y="1280" width="1048" height="56" rx="6" fill="#f6f6f7"/><rect x="26" y="1280" width="3" height="56" rx="1" fill="#3584e4"/>
+<text x="42" y="1300" font-size="11" xml:space="preserve"><tspan fill="#3584e4">You</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b">14:05:12</tspan></text>
+<text x="42" y="1322" font-size="13" fill="#2e3436">Add a model column to the subagent table and backfill it.</text>
+<rect x="30" y="1356" width="22" height="1" fill="#e3e3e6"/>
+<text x="60" y="1360" font-size="11" xml:space="preserve"><tspan fill="#77767b" class="mono">claude-opus-4-7</tspan></text>
+<rect x="169.0" y="1356" width="901.0" height="1" fill="#e3e3e6"/>
+<circle cx="1052" cy="1357" r="8" fill="#c64600"/>
+<text x="1052" y="1361" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">3</text>
+<rect x="26" y="1368" width="1048" height="56" rx="6" fill="#f6f6f7"/><rect x="26" y="1368" width="3" height="56" rx="1" fill="#26a269"/>
+<text x="42" y="1388" font-size="11" xml:space="preserve"><tspan fill="#26a269">Assistant</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b" class="mono">claude-opus-4-7</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b">14:05:20</tspan></text><rect x="275.5" y="1376" width="126.0" height="17" rx="8.5" fill="#ebebed"/><text x="283.5" y="1388" font-size="11" fill="#77767b">Thinking (encrypted)</text>
+<text x="42" y="1410" font-size="13" fill="#2e3436">I'll read the parser and its fixtures first, then add the model column to the subagent table.</text>
+<rect x="26" y="1434" width="1048" height="34" rx="6" fill="#f6f6f7"/><rect x="26" y="1434" width="3" height="34" rx="1" fill="#e66100"/>
+<rect x="42" y="1446" width="11" height="11" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="62" y="1456" font-size="13" fill="#1e1e1e" class="mono">Read</text>
+<text x="103.2" y="1456" font-size="11" fill="#26a269">Completed</text>
+<text x="160.7" y="1456" font-size="11" fill="#77767b">12 ms</text>
+<rect x="26" y="1478" width="1048" height="58" rx="6" fill="#f6f6f7"/><rect x="26" y="1478" width="3" height="58" rx="1" fill="#9141ac"/>
+<circle cx="48" cy="1496" r="6.5" fill="none" stroke="#2e3436" stroke-width="1.4"/>
+<text x="64" y="1501" font-size="13" fill="#1e1e1e">Task: Audit parser fixtures</text>
+<text x="64" y="1522" font-size="11" xml:space="preserve"><tspan fill="#77767b">requested by </tspan><tspan fill="#2e3436" class="mono">claude-opus-4-7</tspan><tspan fill="#77767b"> · ran </tspan><tspan fill="#2e3436" class="mono">claude-haiku-4-5</tspan></text>
+<path d="M 1040 1497 q 9 -9 18 0 q -9 9 -18 0 Z" fill="none" stroke="#2e3436" stroke-width="1.5"/><circle cx="1049" cy="1497" r="2.4" fill="#2e3436"/>
+<circle cx="1012" cy="1507" r="8" fill="#c64600"/>
+<text x="1012" y="1511" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">5</text>
+<rect x="26" y="1546" width="1048" height="56" rx="6" fill="#f6f6f7"/><rect x="26" y="1546" width="3" height="56" rx="1" fill="#3584e4"/>
+<text x="42" y="1566" font-size="11" xml:space="preserve"><tspan fill="#3584e4">You</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b">14:51:40</tspan></text>
+<text x="42" y="1588" font-size="13" fill="#2e3436" class="mono">/model claude-sonnet-4-6</text>
+<rect x="30" y="1622" width="22" height="1" fill="#e3e3e6"/>
+<text x="60" y="1626" font-size="11" xml:space="preserve"><tspan fill="#1e1e1e" class="mono">claude-sonnet-4-6</tspan><tspan fill="#77767b">  from </tspan><tspan fill="#77767b" class="mono">claude-opus-4-7</tspan></text>
+<rect x="319.7" y="1622" width="750.3" height="1" fill="#e3e3e6"/>
+<circle cx="1052" cy="1623" r="8" fill="#c64600"/>
+<text x="1052" y="1627" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">4</text>
+<rect x="26" y="1634" width="1048" height="38" rx="6" fill="#f6f6f7"/><rect x="26" y="1634" width="3" height="38" rx="1" fill="#e66100"/>
+<path d="M 44 1649 l 4 4 l -4 4" fill="none" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="60" y="1648" width="11" height="9" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="78" y="1657" font-size="12" fill="#1e1e1e" font-weight="700">3 Bash · 1 Read</text>
+<text x="178.0" y="1657" font-size="11" fill="#77767b">4 tool calls</text>
+<rect x="26" y="1682" width="1048" height="58" rx="6" fill="#f6f6f7"/><rect x="26" y="1682" width="3" height="58" rx="1" fill="#9141ac"/>
+<circle cx="48" cy="1700" r="6.5" fill="none" stroke="#2e3436" stroke-width="1.4"/>
+<text x="64" y="1705" font-size="13" fill="#1e1e1e">Task: Check migration ordering</text>
+<text x="64" y="1726" font-size="11" xml:space="preserve"><tspan fill="#77767b">requested by </tspan><tspan fill="#2e3436" class="mono">claude-sonnet-4-6</tspan><tspan fill="#77767b"> · child session not indexed</tspan></text>
+<path d="M 1040 1701 q 9 -9 18 0 q -9 9 -18 0 Z" fill="none" stroke="#2e3436" stroke-width="1.5"/><circle cx="1049" cy="1701" r="2.4" fill="#2e3436"/>
+<circle cx="1012" cy="1711" r="8" fill="#c64600"/>
+<text x="1012" y="1715" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">6</text>
+<rect x="26" y="1750" width="1048" height="56" rx="6" fill="#f6f6f7"/><rect x="26" y="1750" width="3" height="56" rx="1" fill="#26a269"/>
+<text x="42" y="1770" font-size="11" xml:space="preserve"><tspan fill="#26a269">Assistant</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b" class="mono">claude-sonnet-4-6</tspan><tspan fill="#9a9996"> · </tspan><tspan fill="#77767b">15:09:41</tspan></text><rect x="288.7" y="1758" width="126.0" height="17" rx="8.5" fill="#ebebed"/><text x="296.7" y="1770" font-size="11" fill="#77767b">Thinking (encrypted)</text>
+<text x="42" y="1792" font-size="13" fill="#2e3436">All three audits are back; two fixtures need regenerating.</text>
+<rect x="26" y="1816" width="1048" height="38" rx="6" fill="#f6f6f7"/><rect x="26" y="1816" width="3" height="38" rx="1" fill="#e66100"/>
+<path d="M 44 1831 l 4 4 l -4 4" fill="none" stroke="#2e3436" stroke-width="1.8"/>
+<rect x="60" y="1830" width="11" height="9" rx="1.5" fill="none" stroke="#2e3436" stroke-width="1.2"/>
+<text x="78" y="1839" font-size="12" fill="#1e1e1e" font-weight="700">2 Edit · 1 Bash</text>
+<text x="178.0" y="1839" font-size="11" fill="#77767b">3 tool calls</text>
+<text x="254.0" y="1839" font-size="11" xml:space="preserve"><tspan fill="#77767b">→ </tspan><tspan fill="#2e3436" class="mono">claude-opus-4-7</tspan></text>
+<circle cx="1052" cy="1836" r="8" fill="#c64600"/>
+<text x="1052" y="1840" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">7</text>
+</g>
+<text x="10" y="1900" font-size="11" fill="#77767b" font-weight="700" letter-spacing="0.6">NOTES</text>
+<circle cx="18" cy="1922" r="8" fill="#c64600"/>
+<text x="18" y="1926" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">1</text>
+<text x="34" y="1926" font-size="12" fill="#2e3436">One more FlowBox child (wraps to a second line): distinct models in order of first use. Tooltip gives counts and unattributed entries.</text>
+<circle cx="18" cy="1944" r="8" fill="#c64600"/>
+<text x="18" y="1948" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">2</text>
+<text x="34" y="1948" font-size="12" fill="#2e3436">Same chip, single model. The “ran” side of a subagent row in the parent is this exact value (same query on the child session).</text>
+<circle cx="18" cy="1966" r="8" fill="#c64600"/>
+<text x="18" y="1970" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">3</text>
+<text x="34" y="1970" font-size="12" fill="#2e3436">Run marker above the first assistant entry of each run (message, tool call, burst or subagent), inside that row, not a new list item.</text>
+<circle cx="18" cy="1988" r="8" fill="#c64600"/>
+<text x="18" y="1992" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">4</text>
+<text x="34" y="1992" font-size="12" fill="#2e3436">Change marker names the new model and, dimmed, the previous one. Tool-only stretches below it need no label of their own.</text>
+<circle cx="18" cy="2010" r="8" fill="#c64600"/>
+<text x="18" y="2014" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">5</text>
+<text x="34" y="2014" font-size="12" fill="#2e3436">Handoff caption: “requested by” = stored source_model; “ran” = models attributed in the linked child session.</text>
+<circle cx="18" cy="2032" r="8" fill="#c64600"/>
+<text x="18" y="2036" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">6</text>
+<text x="34" y="2036" font-size="12" fill="#2e3436">Unknown says why: “child session not indexed”, “child model not recorded”, or “requested by: not recorded”.</text>
+<circle cx="18" cy="2054" r="8" fill="#c64600"/>
+<text x="18" y="2058" font-size="10" fill="#ffffff" font-weight="700" text-anchor="middle">7</text>
+<text x="34" y="2058" font-size="12" fill="#2e3436">A run that starts inside a collapsed burst shows “→ model” on the burst header, so collapsing never hides a change. NULL runs read “model not recorded”.</text>
+</svg>
