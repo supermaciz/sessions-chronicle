@@ -74,7 +74,7 @@ Partial compliance is non-compliance.
 
 1. Build the watchlist.
 Critical: already-supported assistants only.
-In this repo that means Claude Code, OpenCode, Codex, and Mistral Vibe.
+In this repo that means Claude Code, OpenCode, Codex, Mistral Vibe, and Kimi Code.
 Exploratory: candidate assistants only if the user asks.
 2. Collect authoritative evidence per assistant.
 3. Extract parser-relevant signals only: storage paths, file naming, top-level fields, enum/variant values, SQLite tables/columns, tool call linkage, subagent markers.
@@ -89,6 +89,7 @@ Exploratory: candidate assistants only if the user asks.
 | Codex | critical | Rust protocol/session types, rollout recorder, session path code | release notes | enum variants, JSONL layout, storage naming |
 | Mistral Vibe | critical | Python session/message classes, session logging config | release notes/docs | roles, fields, filename pattern |
 | Claude Code | critical | official changelog/releases, package or SDK session types, local sessions | repo docs | path changes, event field drift, partial/incomplete transcript behavior |
+| Kimi Code | critical | wire record types, generated wire manifest (`wire-manifest.d.ts`), session metadata contract, storage paths in official source | release notes, fresh local sampling of `~/.kimi-code/` | wire record additions/removals, `state.json` field drift (`workDir`/`cwd`, `titleKind`), `protocol_version` bumps, subagent linkage metadata |
 | Gemini CLI | exploratory only | official docs plus chat/session persistence source | release notes | JSON structure, file layout, schema stability |
 
 ## Output Format
