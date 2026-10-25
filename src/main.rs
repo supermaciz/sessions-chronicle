@@ -69,6 +69,12 @@ fn register_application_actions(app: &gtk::Application) {
 }
 
 fn main() {
+    // SAFETY: Initialize the process-wide locale before GTK or other libraries can
+    // start threads or install signal handlers that could access it concurrently.
+    unsafe {
+        gettextrs::setlocale(LocaleCategory::LcAll, "");
+    }
+
     let invocation = startup::parse_invocation(env::args()).unwrap_or_else(|error| error.exit());
     let args = invocation.local;
 
@@ -91,7 +97,6 @@ fn main() {
         .init();
 
     // setup gettext
-    gettextrs::setlocale(LocaleCategory::LcAll, "");
     gettextrs::bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR).expect("Unable to bind the text domain");
     gettextrs::textdomain(GETTEXT_PACKAGE).expect("Unable to switch to the text domain");
 
