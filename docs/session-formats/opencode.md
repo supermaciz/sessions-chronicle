@@ -32,6 +32,19 @@ Confirmed on 2026-10-14 from upstream `dev`
 (`packages/core/src/session/sql.ts`, `packages/schema/src/session-message.ts`,
 `packages/schema/src/session.ts`) and from a local OpenCode v2.0.29 database.
 
+> **Format watch 2026-10-26 (v2.1.0 → v2.1.4, `dev` `ed74ec82`):** v2.1.0
+> (`acdcdb8d`, [#57260](https://github.com/anomalyco/opencode/pull/57260))
+> renamed provider replay data inside `session_message.data` to `native` and
+> trimmed compaction rows (see *Message types* and *Assistant `content[]`*
+> below). After v2.1.4, `dev` dropped the `session_pending` table
+> (`20261025154125_drop_session_pending`,
+> [#59020](https://github.com/anomalyco/opencode/pull/59020)) and added the
+> opt-in `blob` / `blob_ref` media tables (`20261025123711_blob`,
+> [#58741](https://github.com/anomalyco/opencode/pull/58741)). None of these
+> touch `session_v2` / `session_message` columns or a field the V2 reader reads.
+> Rows written before v2.1 keep the old shape (upgraded on read upstream by
+> `packages/schema/src/session-legacy.ts`).
+
 ### Schema
 
 ```sql
@@ -87,12 +100,23 @@ CREATE TABLE session_message (
 );
 ```
 
-V2 companion tables in the same database: `session_pending`, `session_inbox`,
+V2 companion tables in the same database: `session_inbox`,
 `instruction_state`, `instruction_blob`, `instruction_entry`, `project`,
 `project_directory`, `worktree`, `permission`, `session_share`, `todo`,
 `credential`, `kv`, `event`, `event_sequence`, `account`, `account_state`,
 `control_account` (`__drizzle_migrations` / `migration` track applied schema
-migrations).
+migrations). `session_pending` existed up to v2.1.4 and is dropped on `dev`
+after 2026-10-25 (`20261025154125_drop_session_pending`); databases created
+before that migration may still contain it.
+
+Since `dev` 2026-10-25 (after v2.1.4, `20261025123711_blob`), two media tables
+exist: `blob` (`hash` PK = lowercase hex SHA-256, `mime`, `bytes`, `width?`,
+`height?`, `data` BLOB, `time_created`) and `blob_ref` (`session_id` →
+`session_v2.id`, `message_id`, `hash` → `blob.hash`, `seq`). They are only
+written when the opt-in `experimental.media_blob` config flag is on: user
+`files` and tool-result `file` items then carry `uri: "media:<sha256>"`
+instead of inline data (`packages/core/src/session/stored.ts`,
+`packages/core/src/session/blob.ts`). Sessions Chronicle does not read them.
 
 > The `session_input` and `session_context_epoch` tables documented by the
 > 2026-09-06 watch pass no longer exist upstream: queued input moved to
@@ -130,8 +154,8 @@ migrations).
 
 | `type` | Key `data` fields |
 |--------|-------------------|
-| `user` | `text`, `files`, `agents`, `skills` |
-| `assistant` | `agent`, `model`, `content[]`, `snapshot?`, `finish?`, `rawFinish?`, `providerState?`, `cost?`, `tokens?`, `error?`, `retry?` |
+| `user` | `text`, `files` (inline data, or `uri: "media:<sha256>"` refs with `experimental.media_blob`), `agents`, `skills` |
+| `assistant` | `agent`, `model`, `content[]`, `snapshot?`, `finish?`, `rawFinish?`, `native?` (v2.1+; `providerState?` before), `cost?`, `tokens?`, `error?`, `retry?` |
 | `synthetic` | `text`, `description?`, `metadata?` (used for subagent completion) |
 | `system` | `text`, `description?` |
 | `skill` | `skill`, `name`, `text` |
@@ -139,7 +163,7 @@ migrations).
 | `agent-switched` | `agent`, `previous?` |
 | `model-switched` | `model`, `previous?` |
 | `location-switched` | `location`, `projectID?`, `subpath?`, `previous?` |
-| `compaction` | `status`, `reason`, `summary`, `recent`; model/providerState/providerContext when completed, `error` when failed |
+| `compaction` | `status`, `reason`, `summary`; `model?`, `native?` (provider replacement window in `native.messages`), `cost?`, `tokens?` when completed; `error` when failed. Pre-v2.1 rows also carry `recent` and `providerState` / `providerContext` (removed in v2.1.0; upstream re-exposes the kept text as `metadata.recent` on read) |
 | `idle` | `outcome`, `error?` |
 
 Every message also carries `id`, `metadata?`, and `time.created`.
@@ -154,9 +178,13 @@ variants:
 
 | Content `type` | Key fields |
 |----------------|------------|
-| `text` | `text`, `state?` |
-| `reasoning` | `text`, `state?`, `time?` |
-| `tool` | `id` (e.g. `call_…`), `name`, `executed?`, `providerState?`, `providerResultState?`, `state`, `time` |
+| `text` | `text`, `native?` (v2.1+; `state?` before) |
+| `reasoning` | `text`, `native?` (v2.1+; `state?` before), `time?` |
+| `tool` | `id` (e.g. `call_…`), `name`, `executed?`, `native?` (v2.1+, merges the former `providerState?` + `providerResultState?`), `state`, `time` (`created`, `ran?`, `completed?`) |
+
+`native` is provider-owned replay data (`Record<string, unknown>`); Sessions
+Chronicle reads none of `native` / `providerState` / `providerResultState`, so
+the v2.1.0 rename has no parser impact.
 
 The tool name is the `name` field — **not** the V1 `tool` field. The V1
 `part` table's wider type set (`step-start`, `step-finish`, `snapshot`,
@@ -729,7 +757,12 @@ turns.
 - **Subagent linkage:** V1 task-tool metadata plus a V2 `synthetic`
   `metadata.source == "subagent"` completion message.
 - **Input/context tables:** `session_input` / `session_context_epoch` →
-  `session_pending` / `session_inbox` / `instruction_state`.
+  `session_pending` / `session_inbox` / `instruction_state` (`session_pending`
+  later dropped on `dev`, 2026-10-25).
+- **v2.1.0 field renames (inside `session_message.data`):** `providerState` /
+  `state` → `native` on assistant messages and `text` / `reasoning` items; tool
+  `providerState` + `providerResultState` → `native`; compaction loses `recent`
+  and `providerContext`.
 
 ---
 
@@ -808,8 +841,10 @@ zero, and session-level rollup columns (`tokens_*`, `cost`, `model`) are ignored
   non-subagent `synthetic`) and unknown assistant content types are skipped
   with a diagnostic.
 - Tool-result `file` blocks are skipped; attachments are never fetched and
-  binary content is never rendered.
-- Compaction `recent` history and fork ancestry are not reconstructed.
+  binary content is never rendered (this also covers `media:<sha256>` refs into
+  the opt-in `blob` table).
+- Compaction `recent` history (pre-v2.1 rows; `metadata.recent` / `native.messages`
+  for v2.1+) and fork ancestry are not reconstructed.
 - Context has no full-text index, by design.
 
 ### Title and eligibility
@@ -837,7 +872,9 @@ source database is never modified and a consistent snapshot is parsed.
 > reflect current (`dev`) locations.
 
 - [OpenCode GitHub Repository](https://github.com/anomalyco/opencode)
-- [OpenCode SQLite Drizzle schema (`session_v2`, `session_message`, `session_pending`, `session_inbox`, `instruction_*`)](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts)
+- [OpenCode SQLite Drizzle schema (`session_v2`, `session_message`, `session_inbox`, `instruction_*`, `blob`, `blob_ref`)](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/sql.ts)
+- [OpenCode pre-v2.1 row upgrade (`SessionLegacy`)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session-legacy.ts)
+- [OpenCode stored media refs (`SessionStored`)](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/stored.ts)
 - [OpenCode V2 message/part types (`SessionMessage`, `AssistantContent`, `ToolState`)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session-message.ts)
 - [OpenCode V2 session type (`Session.Info`)](https://github.com/anomalyco/opencode/blob/dev/packages/schema/src/session.ts)
 - [OpenCode V2 subagent completion marker](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/subagent-completion.ts)

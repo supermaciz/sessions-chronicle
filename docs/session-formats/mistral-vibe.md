@@ -33,6 +33,9 @@ only**; its fixture-backed range is stores written by Vibe 3.0.0, 3.0.1 and
 Confirmed from upstream source (`harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py`,
 `_session_catalog.py`, `_subagents/_operations.py`) at commit `63d0e8f`
 (v3.0.2) and from local v3.0.2 samples under `~/.vibe/logs/session/unified/`.
+Rechecked by the 2026-10-25/26 format-watch passes: `main` is still `63d0e8f`,
+PyPI `mistral-vibe` is still 3.0.2, and `STORE_FORMAT_MINOR` is still 9 — the
+minor accepted by `crates/core/src/parsers/mistral_vibe_unified/store.rs`.
 
 ### Storage & File Naming
 

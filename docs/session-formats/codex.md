@@ -15,6 +15,13 @@ Version introduction dates and population-wide prevalence of paginated history
 were not established. No new local session capture or reproduction test was run.
 Local sampling below dates from 2026-09-06.
 
+**Format watch 2026-10-25/26: stable `rust-v0.164.0`** (`6aaac694`, released
+2026-10-23; `main` `970111f6` unchanged on 2026-10-26). Persistence policy,
+protocol and turn-item types were diffed against `rust-v0.159.3`; see
+[Rollout Changes in 0.162–0.164](#rollout-changes-in-0162-0164). Storage paths
+(`sessions/`, `archived_sessions/`) and rollout file naming are unchanged. No
+new local rollout was captured.
+
 **Desktop/import watch: 2026-10-04; documented 2026-10-11.** The focused
 check below does not refresh the protocol comparison above.
 
@@ -164,7 +171,7 @@ is a sample, not a contract.
 
 | `item.type` | Count | Notes |
 |-------------|-------|-------|
-| `CommandExecution` | 19 | `command[]`, `cwd`, `status`, `stdout`, `stderr` |
+| `CommandExecution` | 19 | `command[]`, `cwd`, `status`, `stdout`, `stderr` (0.160.0 capture; since 0.162.0 only `aggregated_output` remains — see [Rollout Changes in 0.162–0.164](#rollout-changes-in-0162-0164)) |
 | `AgentMessage` | 9 | `content[].text`, `phase` (for example `commentary`) |
 | `UserMessage` | 4 | `content[].text`, `text_elements[]` |
 | `Reasoning` | 4 | `summary_text[]`, `raw_content[]` |
@@ -303,6 +310,40 @@ both `session_meta.payload.parent_thread_id` and the structured
 `source.subagent.thread_spawn.parent_thread_id`. Sessions Chronicle currently
 uses the structured `source` value first, then direct `parent_thread_id` as a
 child-session linkage fallback.
+
+### Rollout Changes in 0.162–0.164
+
+Confirmed by diffing `rust-v0.159.3` against
+[`rust-v0.164.0`](https://github.com/openai/codex/releases/tag/rust-v0.164.0)
+(format watch 2026-10-25). None of these changes touches a field the parser
+requires (`turn_context.payload.model` / `cwd`, message items, tool-call
+linkage); unknown `response_item` types are already ignored.
+
+- **`additional_tools` response items are persisted (0.162.0+).**
+  [`should_persist_response_item`](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/rollout/src/policy.rs)
+  now returns `true` for `ResponseItem::AdditionalTools` (it was `false` at
+  0.159.3), so rollouts can contain `response_item` lines of type
+  `additional_tools`. Their on-disk shape has not been captured locally.
+- **Command and MCP output truncation in paginated history (0.162.0+).**
+  `CommandExecution` `aggregated_output` is truncated to 64 KiB
+  (`PERSISTED_COMMAND_OUTPUT_MAX_BYTES`) with the marker
+  `... command output truncated for persistence ...`; persisted MCP results are
+  capped at 64 KiB (`PERSISTED_MCP_RESULT_MAX_BYTES`).
+- **`CommandExecutionItem` / `ExecCommandEndEvent` lose `stdout`, `stderr` and
+  `formatted_output` (0.162.0).** Only `aggregated_output` remains
+  ([`items.rs`](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/protocol/src/items.rs)).
+  `exec_command_end` is not persisted by the policy, so the parser's
+  `stdout` / `stderr` fallback only matters for old legacy rollouts.
+- **`turn_context` slimmed (0.162.0,
+  [#51492](https://github.com/openai/codex/pull/51492)).**
+  [`TurnContextItem`](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/protocol/src/protocol.rs)
+  no longer persists `workspace_roots`, `current_date`, `timezone`, `network`,
+  `personality` or `multi_agent_mode`; `summary` is optional (written as the
+  legacy placeholder `none`). `model` and `cwd` remain required. The optional
+  `turn_id`, `root_turn_id`, `disabled_plugin_ids` and
+  `active_permission_profile` fields are already present at 0.159.3.
+- **Sub-agent activities carry `model` and `reasoning_effort`** (optional,
+  0.162.0, [#51463](https://github.com/openai/codex/pull/51463)).
 
 ### History Modes and Shared Prefixes
 
@@ -1023,6 +1064,8 @@ into memory.
 ## Primary Sources
 
 - [Codex stable 0.159.3 release](https://github.com/openai/codex/releases/tag/rust-v0.159.3)
+- [Codex stable 0.164.0 release](https://github.com/openai/codex/releases/tag/rust-v0.164.0)
+- [Codex persistence policy at 0.164.0 (`additional_tools`, 64 KiB truncation)](https://github.com/openai/codex/blob/rust-v0.164.0/codex-rs/rollout/src/policy.rs)
 - [Codex persistence policy, reverified at 0.159.3](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/rollout/src/policy.rs)
 - [Codex protocol additions, verified at 0.159.3](https://github.com/openai/codex/blob/rust-v0.159.3/codex-rs/protocol/src/protocol.rs)
 - [Codex typed turn items, October inspected commit](https://github.com/openai/codex/blob/83cf88306e806b409f873b63544de3f1224f0fc3/codex-rs/protocol/src/items.rs)
