@@ -546,7 +546,7 @@ boolean, and the nested `snapshot` object repeats `messageId`.
 - Recent local sessions also show a top-level `toolUseResult` object on some user events, duplicating stdout/stderr in structured form.
 - Large tool outputs can be materialized to sibling files under `tool-results/` and then referenced by later `Read` tool calls.
 
-### Transcript Completeness Notes (changelog, v2.1.296–v2.1.300)
+### Transcript Completeness Notes (changelog, v2.1.296–v2.1.310)
 
 Changelog entries that affect what a transcript file contains, without
 changing its structure:
@@ -559,6 +559,30 @@ changing its structure:
   transcript.
 - v2.1.300: fixed the first transcript entry written after resuming a session
   being lost. Resumed sessions written by earlier versions may miss one entry.
+
+Added by the 2026-10-25/26 format-watch passes (changelog v2.1.303–v2.1.310,
+latest npm release 2.1.310; no fresh local capture yet, so the record shapes
+below are not confirmed):
+
+- v2.1.304: in auto mode the safety classifier's context is no longer stored
+  with every request (smaller session files). `serverClassifierContext` (see
+  [Metadata Available in Events](#metadata-available-in-events)) is therefore
+  expected to disappear or become rare in v2.1.304+ transcripts; the parser
+  does not read it.
+- v2.1.304: a new transcript line is written when a plugin that runs first
+  skips one of a mod's hooks (names the event and the plugin). Its `type` /
+  subtype has not been captured; the parser's catch-all event dispatch is
+  expected to skip it.
+- v2.1.304: fixed `CLAUDE_CODE_TRANSCRIPT_LOCAL_GC` dropping messages when the
+  disk filled up during trimming.
+- v2.1.307: fixed subagent transcripts (`subagents/agent-*.jsonl`) recording
+  placeholder token usage and an empty `stop_reason` for streamed responses.
+  `message.usage` in subagent transcripts written by earlier versions is not
+  reliable for token analytics.
+- v2.1.309: fixed long tool-output previews being cut through an emoji, which
+  left transcripts that `jq` could not parse. Transcripts written before
+  v2.1.309 may contain an invalid JSONL line (exact byte shape not captured:
+  escaped lone UTF-16 surrogate or invalid UTF-8).
 
 ### Meta Flag
 
@@ -987,6 +1011,7 @@ machine, and proxy low-skip workloads.
 - [Claude Code subagents docs (subagent transcript path)](https://docs.anthropic.com/en/docs/claude-code/sub-agents)
 - [Claude Code changelog (compaction/transcript behavior changes)](https://docs.anthropic.com/en/docs/claude-code/changelog)
 - [Claude Code CHANGELOG.md (v2.1.300 API request recording entry)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
+- [Claude Code CHANGELOG.md v2.1.304–v2.1.310 (transcript completeness entries)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21310)
 - [Claude Code model configuration (official; aliases, version history, full model names)](https://code.claude.com/docs/en/model-config)
 - [Models overview (API model IDs)](https://platform.claude.com/docs/en/about-claude/models/overview)
 - [Claude Code issue: duplicate entries in session logs](https://github.com/anthropics/claude-code/issues/1524)

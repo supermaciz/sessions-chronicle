@@ -84,12 +84,12 @@ Exploratory: candidate assistants only if the user asks.
 ## Assistant Matrix
 
 | Assistant | Watch level | Check first | Then check | Watch for |
-|---|---|---|---|
-| OpenCode | critical | session types, Drizzle schema, storage paths in official source | release notes | SQLite tables/columns, part types, path changes |
-| Codex | critical | Rust protocol/session types, rollout recorder, session path code | release notes | enum variants, JSONL layout, storage naming |
-| Mistral Vibe | critical | Python session/message classes, session logging config | release notes/docs | roles, fields, filename pattern |
+|---|---|---|---|---|
+| OpenCode | critical | session types (`packages/schema/src/session-message.ts`), Drizzle schema (`packages/core/src/session/sql.ts`), migrations (`packages/core/src/database/migration/`), storage paths in official source | release notes, npm `opencode-ai` dist-tags (v1 vs v2 channel) | SQLite tables/columns, message/content types, path changes |
+| Codex | critical | Rust protocol/session types, rollout persistence policy (`codex-rs/rollout/src/policy.rs`), rollout recorder, session path code | release notes | enum variants, persisted item set, JSONL layout, storage naming |
+| Mistral Vibe | critical | unified store source (`harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py`: `STORE_FORMAT_MINOR`, manifest/journal types), legacy Python session/message classes, session logging config | release notes/docs, PyPI `mistral-vibe` | `store_format_minor` bumps (hard reader boundary), journal record types, `child-<hex>` subagent layout, legacy roles/fields/filename pattern |
 | Claude Code | critical | official changelog/releases, package or SDK session types, local sessions | repo docs | path changes, event field drift, partial/incomplete transcript behavior |
-| Kimi Code | critical | wire record types, generated wire manifest (`wire-manifest.d.ts`), session metadata contract, storage paths in official source | release notes, fresh local sampling of `~/.kimi-code/` | wire record additions/removals, `state.json` field drift (`workDir`/`cwd`, `titleKind`), `protocol_version` bumps, subagent linkage metadata |
+| Kimi Code | critical | wire record types, generated wire manifest (`wire-manifest.d.ts`), session metadata contract, storage paths in official source | release notes, fresh local sampling of `~/.kimi-code/` | wire record additions/removals, `state.json` field drift (`workDir`/`cwd`, `titleKind`), `protocol_version` bumps, subagent linkage metadata, sessions imported from other assistants (`state.json.custom.imported_from`) |
 | Gemini CLI | exploratory only | official docs plus chat/session persistence source | release notes | JSON structure, file layout, schema stability |
 
 ## Output Format

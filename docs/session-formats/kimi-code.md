@@ -21,6 +21,29 @@ manifest (65 durable record types), the human-domain event layer
 auto-title caller. Entries marked *(2.3.x)* are confirmed from local journals
 and, where noted, from that source inspection.
 
+**Format watch 2026-10-25/26 (2.3.2 + main `f70c3652`):** no change under
+`packages/agent-core-v2/src/wire/` or in `wire-manifest.d.ts` between 2.3.1,
+[2.3.2](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)
+and main; `WIRE_PROTOCOL_VERSION` stays `'1.5'`. 2.3.2 is behavioral only:
+subagents are launched only on explicit request
+([#4386](https://github.com/MoonshotAI/kimi-code/pull/4386)) and `AgentSwarm`
+can no longer enter swarm mode by itself
+([#4384](https://github.com/MoonshotAI/kimi-code/pull/4384)), so `swarm_mode`
+entries with a `tool` trigger are no longer written (record shape unchanged).
+Unreleased on main (2026-10-26):
+[#4342](https://github.com/MoonshotAI/kimi-code/pull/4342) adds
+`/import-sessions`, which converts recent Claude Code and Codex sessions into
+ordinary Kimi sessions under `sessions/<workDirKey>/<sessionId>/`
+(`packages/migration-legacy/src/imported-session.ts`): a synthesized
+`agents/main/wire.jsonl` (metadata `protocol_version: "1.0"`, same turn
+records as migrated kimi-cli sessions), a `state.json` with
+`titleKind: "generated"`, `agents.main.parentAgentId: null`, and
+`custom: {imported_from: "claude-code" | "codex", imported_source_id,
+imported_source_path, imported_at}`, plus an `attachments/` directory holding
+the effective history and a source copy. Once released, the same conversation
+can therefore be indexed both from its original Claude Code / Codex file and
+as a Kimi session; `custom.imported_from` is the marker to recognize it.
+
 ---
 
 ## Storage & File Naming
