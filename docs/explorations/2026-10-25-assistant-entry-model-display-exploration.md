@@ -394,9 +394,44 @@ treatment.**
 
 ## Decision
 
-**Pending confirmation.** Already decided: the per-message model label is kept.
+**Decided (2026-10-27): the hybrid.**  
+Proposal 1's MODELS section in the summary popover, plus Proposal 2's
+transcript treatment and subagent caption. The per-message model label is
+kept.  
 
-Recommendation: **the hybrid above.**
+What gets built:
+
+- **Summary popover**: a MODELS section between ACTIVITY and TOKENS, styled
+  like them. One row per model (full slug, entry count, time of first use),
+  with a jump button that closes the popover and scrolls to the model's first
+  entry. A footer counts entries with no recorded model. With one model: a
+  single row, no jump button. With no attributed entry: the section is hidden.
+- **Transcript**: Proposal 2's thin run markers, drawn inside the first row of
+  each run (never a new list item). Later markers also name the previous model,
+  dimmed. A collapsed burst header shows `→ model` when a run starts inside it,
+  and NULL stretches get an explicit `model not recorded` marker.
+- **Assistant messages**: the existing per-message model label is unchanged.
+- **Tool-call rows**: no model label; the run markers carry the information.
+- **Subagent rows**: Proposal 2's handoff caption, `requested by … · ran …`.
+  "Requested by" is the stored `source_model`; "ran" is
+  `session_models(child)`. Unknowns say why: `child session not indexed`,
+  `child model not recorded`, or `requested by: not recorded`.
+- The **Shared Risks** above are in scope: the partial-reindex rule,
+  unreparsable sources, and the off-main-thread child lookup with a per-child
+  cache.
+
+Not retained:
+
+- Proposal 1's full-width centred dividers: they take more vertical space and
+  ignore collapsed bursts and NULL stretches.
+- Proposal 2's model chip with a tooltip: it needs a hover, and as a fifth
+  FlowBox child it wraps alone onto a second line.
+- Proposal 3 (relay lane, slot colours, baton). Its segmented bar may be added
+  later inside the MODELS section, without the transcript lane.
+- A model label on every tool-call row, like assistant messages. It would be
+  consistent and readable wherever you land, but it crowds compact rows,
+  repeats one slug dozens of times in tool-only sessions, and hides the moment
+  the model changes.
 
 Rationale:
 
@@ -412,7 +447,6 @@ Rationale:
 
 ## Next Steps
 
-1. Confirm the hybrid (or pick a single proposal).
-2. Write the design spec in `docs/superpowers/specs/`.
-3. Plan the implementation with `writing-plans`, after the storage spec has
+1. Write the design spec in `docs/superpowers/specs/`.
+2. Plan the implementation with `writing-plans`, after the storage spec has
    landed.
