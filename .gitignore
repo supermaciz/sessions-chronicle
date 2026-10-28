@@ -72,3 +72,6 @@ website/dist/
 website/nodes_modules/
 
 
+
+# Python bytecode (skill scripts and tests)
+__pycache__/
