@@ -4,13 +4,22 @@
 **Revision:** 2026-10-25 — rebased on the parser changes merged since the original
 draft: OpenCode V2 (#210), Mistral Vibe Unified (#211), and the Kimi Code
 subagent/swarm refresh (#213). Cache schema base is now v22.  
+**Revision:** 2026-11-01 — re-checked against `main` (no parser or schema change
+since 2026-10-25) and against the display decision. Added user-derived
+tool calls, the Codex `collab_agent_spawn_end.model` field, a correction for
+OpenCode V2 (rows are read in their final state), and a hand-off section for
+the display work.  
+**Consumer:** [Display model attribution for tool calls and subagents](../../explorations/2026-10-25-assistant-entry-model-display-exploration.md)
+(hybrid decided 2026-10-27).  
 
 ## Intent and scope
 
 Preserve the model that produced each indexed assistant entry, including entries
 containing only tool calls. The eventual product goal is to display this information
 in the transcript. This change covers parsing, persistence, and retrieval only;
-display behavior will be designed separately.
+display behavior is decided in the exploration linked above and will get its
+own spec. The [hand-off section](#hand-off-to-the-display-work) lists what that
+work can rely on.
 
 The user approved the storage-only design. This document records that design and
 clarifies one detail discovered while inspecting the implementation: delegation
@@ -42,6 +51,16 @@ The relevant code lives in `crates/core/`:
   standalone loaders. Child-session linking in `indexer.rs` and
   `indexer/vibe_unified.rs` later issues `UPDATE subagents` statements that
   touch `child_session_id` only.
+- `database/mod.rs`: `load_transcript_items` / `load_all_transcript_items`
+  return `TranscriptItemRow`, whose `model` field is the joined `m.model`
+  (messages only). Columns are resolved by name (`stmt.column_index("model")`).
+- `parsers/mistral_vibe_unified/effects.rs`: besides `push_effect`,
+  `push_skill` creates a settled `skill` tool call from the skill payloads of a
+  **user** message (`convert.rs`, `"user"` branch). It is not an assistant
+  generation.
+- `parsers/codex.rs`: `handle_turn_context` stores the normalized
+  `turn_context.payload.model` in `current_turn_model`, which assistant messages
+  already use.
 - `database/schema.rs`: the current schema version is 22. Since the original
   draft, v19–v20 added OpenCode context storage, source generations, and
   inventories; v21 added `vibe_unified_signatures`; v22 cleared Kimi
@@ -107,6 +126,9 @@ without redesigning transcript storage now.
    no attributable originating generation context, leave `source_model` unknown.
 8. User messages, tool results, and context entries do not gain independent
    model attribution. Existing synthetic-event filtering remains in force.
+   Tool calls that a parser builds from user-side content (today only the
+   Mistral Vibe Unified `skill` calls from `push_skill`) keep `model = NULL`.
+   They do not take the current model.
 9. A conversion that turns one record into another (a Kimi tool call matched to
    a subagent, a swarm call expanded into several subagents) carries the
    attribution over unchanged; it never re-resolves it at conversion time.
@@ -116,6 +138,10 @@ without redesigning transcript storage now.
 `Subagent.source_model` means the model of the parent assistant that requested
 the delegation. A requested child model in call arguments (for example Claude
 Code `input.model`, Kimi `args.subagent_type`/profile) is not this value.
+Neither is a model reported for the spawned agent: Codex
+`collab_agent_spawn_end.model` and the optional sub-agent activity `model`
+(Codex 0.162.0+, see `docs/session-formats/codex.md`) describe the child, so
+they never fill `source_model`. This change does not store them anywhere.
 Entries within an indexed child session use that child's own source context.
 Where a delegation retains both a tool-call record and a subagent record, both
 records carry the same originating model.
@@ -145,10 +171,10 @@ only as subagents.
 | --- | --- | --- |
 | Claude Code | Normalized `message.model` on the containing assistant event | Pass the model to regular tool calls and `Task`/`Agent` delegation records, including responses without text. Teammate launches (`input.name`) follow the same rule; `input.model` is ignored. |
 | OpenCode V1 SQLite and JSON | The parsed message model already available to part processing | Apply it to tool-call and subagent outcomes in both backends. |
-| OpenCode V2 | The assistant row's normalized `model.id` (`parsers/opencode/v2_projection.rs`) | Apply it to every `tool` content item and every `task`/`subagent` row of that assistant message. Tool-state updates to an existing message keep the model. Standalone completion rows stay unknown (see above). No session-level model is applied retroactively. |
-| Codex | The turn context already used for assistant messages | Capture it for calls and attributable delegation starts (`spawn_agent` response items and `collab_agent_spawn_*` events with a matching call); results, `collab_*` enrichment, and later lifecycle updates must not overwrite it. |
+| OpenCode V2 | The assistant row's normalized `model.id` (`parsers/opencode/v2_projection.rs`) | Apply it to every `tool` content item (`project_tool`) and every `task`/`subagent` row (`project_task_subagent`) of that assistant message. Rows are read once, in their final stored state, ordered by `seq, id`. There is no in-stream update to reconcile. Standalone completion rows stay unknown (see above). No session-level model is applied retroactively. |
+| Codex | `current_turn_model`, the turn context already used for assistant messages | Capture it for calls and attributable delegation starts (`spawn_agent` response items and `collab_agent_spawn_*` events with a matching call). A `collab_agent_spawn_end` without a matching call is lifecycle-only discovery and keeps `source_model = NULL` (rule 7). Its payload `model` is the child's (see above). Results, `collab_*` enrichment, and later lifecycle updates must not overwrite the stored value. |
 | Mistral Vibe (legacy) | The existing normalized `config.active_model` session metadata | Use the same fallback as assistant messages and reasoning, scoped to the session being parsed. |
-| Mistral Vibe Unified | The `current_model` already tracked in `parsers/mistral_vibe_unified/convert.rs` | Pass it to `push_effect` in `effects.rs` for both tool and subagent effects. When history has `model_change` checkpoints, effects before the first checkpoint stay unknown; otherwise the session model fallback applies, as for messages. Discarded or provisional entries remain omitted. |
+| Mistral Vibe Unified | The `current_model` already tracked in `parsers/mistral_vibe_unified/convert.rs` | Pass it to `push_effect` in `effects.rs` for both tool and subagent effects. When history has `model_change` checkpoints, effects before the first checkpoint stay unknown; otherwise the session model fallback applies, as for messages. `skill` calls built by `push_skill` from user messages stay unknown (rule 8). Discarded or provisional entries remain omitted. |
 | Kimi Code | The originating step's resolved model (`llm.request` `modelAlias`/`model`, then the pending/unscoped queues, then the `config.update` hint) | Resolve calls against their step using the rules already used for assistant content. Preserve that attribution across later results, `Agent` matching (including resumes), and `AgentSwarm` expansion. Child journals resolve against their own steps. |
 
 The session-level fallbacks (legacy Mistral Vibe, Unified without checkpoints,
@@ -174,15 +200,18 @@ new upstream format support to address them.
 - Do not add model indexes or include model identifiers in full-text search.
 - Do not change UI rendering, labels, grouping, filtering, or analytics.
 
-The future display work may extend `load_transcript_items` /
-`load_all_transcript_items` to expose these fields uniformly. Standalone
-retrieval must already return them in this change.
+The display work will extend `load_transcript_items` /
+`load_all_transcript_items` to expose these fields. Standalone retrieval must
+already return them in this change.
 
 ## Migration and existing sessions
 
 Add the next schema migration (v23 against the current v22 base). Version
 numbers have collided between branches before: if another migration lands
-first, allocate the next available version during implementation.
+first, allocate the next available version during implementation. At this
+revision, `feat/missing-source-retention` still carries an unmerged v18 that
+must also be renumbered to v23 or later, so whichever branch merges second
+takes the next number.
 
 The migration adds both nullable columns, following the existing conventions
 (`table_exists`/`column_exists` guards for already-added columns). Backfill then
@@ -235,12 +264,16 @@ Use focused fixtures and real database round trips to cover:
 - Missing, blank, malformed, and synthetic model values where applicable.
 - All five AI assistants, including OpenCode V1 SQLite, JSON, and V2; legacy and
   Unified Mistral Vibe; and supported Codex call representations.
-- OpenCode V2: tool and `task`/`subagent` rows inherit `model.id`; a streaming
-  update keeps it; task + completion keeps the task's model; a standalone
-  completion row stays unknown.
+- OpenCode V2: tool and `task`/`subagent` rows inherit `model.id`; two
+  assistant rows with different models keep their own; task + completion
+  keeps the task's model; a standalone completion row stays unknown.
+- Codex: a `collab_agent_spawn_end` whose payload `model` differs from the
+  turn model stores the turn model; a spawn end without a matching call stays
+  unknown.
 - Mistral Vibe Unified: effects before the first `model_change` are unknown,
   effects after each change take the new model, and a store without checkpoints
-  uses the session model.
+  uses the session model. A `skill` call from a user message stays unknown
+  even when a model is current.
 - Kimi Code: a matched `Agent` call keeps its step model; three resume calls in
   steps with different models keep three distinct values on one child; all
   expanded `AgentSwarm` rows share the call's model; a generic (unmatched) swarm
@@ -272,6 +305,45 @@ dbus-run-session -- xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo cargo tes
 
 No screenshots or Flatpak build verification are required for this storage-only
 change unless implementation also changes UI or packaging scope.
+
+## Hand-off to the display work
+
+This section adds no work to this change. It records what the display spec can
+rely on and the traps found while checking the code.
+
+- **What NULL means.** `NULL` in `tool_calls.model` / `subagents.source_model`
+  covers three cases that storage does not tell apart:
+  1. the source did not record a model;
+  2. the row is not an assistant generation (Vibe Unified user-side `skill`
+     calls, rule 8);
+  3. the row was discovered without a generation context (OpenCode V2
+     standalone completions, Codex spawn ends without a call, rule 7).
+
+  The planned "model not recorded" run marker will also fire for cases 2
+  and 3. The display spec must accept that or skip those rows when it finds
+  run boundaries.
+- **Partial reindex.** The migration invalidates every freshness mechanism at
+  once, so after the first indexing run, rows stay NULL only for sources that
+  cannot be reparsed. The exploration's "pre-attribution" rule (message models
+  present, no attributed tool call or subagent in the session) only needs to
+  cover those sessions.
+- **Transcript query.** `load_transcript_items` resolves columns by name, and
+  the existing `model` alias is `m.model`. New columns need distinct aliases
+  (for example `tc.model AS tool_call_model`, `sa.source_model AS
+  subagent_source_model`), or `column_index("model")` keeps returning the
+  message column without any error. `sa.child_session_id` is not selected
+  today either. The subagent "ran …" caption needs it.
+- **`session_models`.** All three sources are queryable after this change:
+  `messages.model` (assistant role), `tool_calls.model`,
+  `subagents.source_model`. "Ran" for a subagent = `session_models` of its
+  `child_session_id`, and "child session not indexed" = no `sessions` row for
+  that ID.
+- **Time of first use.** Messages have `timestamp`, tool calls have nullable
+  `started_at`, and subagents have no timestamp. The MODELS section's "first
+  use" time must come from the first entry that has one, or be omitted.
+- **Codex child model.** `collab_agent_spawn_end.model` would give a "ran"
+  value even when the child rollout is not indexed. Storing it is out of scope
+  here; the display spec may propose it as a separate, child-side field.
 
 ## Acceptance criteria
 
