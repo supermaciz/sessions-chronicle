@@ -30,19 +30,28 @@ subagents are launched only on explicit request
 can no longer enter swarm mode by itself
 ([#4384](https://github.com/MoonshotAI/kimi-code/pull/4384)), so `swarm_mode`
 entries with a `tool` trigger are no longer written (record shape unchanged).
-Unreleased on main (2026-10-26):
-[#4342](https://github.com/MoonshotAI/kimi-code/pull/4342) adds
-`/import-sessions`, which converts recent Claude Code and Codex sessions into
-ordinary Kimi sessions under `sessions/<workDirKey>/<sessionId>/`
+
+**Format watch 2026-11-02 (2.4.1 + main `fc3b521b`):** npm latest
+[2.4.1](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md);
+`WIRE_PROTOCOL_VERSION` still `'1.5'`. The durable wire manifest lists **69**
+record types (was 65): added `environment.set_binding`, `mcp.server_failed`,
+`mcp.server_failure_resolved`, `tool_select.initialized`,
+`tool_select.tools_changed`; removed `runtime.set_binding`. Session metadata
+may carry optional `environmentId` / `environmentCwd`
+(`packages/klient/src/contract/session/metadata.ts`).
+[#4342](https://github.com/MoonshotAI/kimi-code/pull/4342) **shipped in 2.4.0**:
+`/import-sessions` / `kimi import-sessions` converts recent Claude Code and
+Codex sessions into ordinary Kimi sessions under
+`sessions/<workDirKey>/<sessionId>/`
 (`packages/migration-legacy/src/imported-session.ts`): a synthesized
 `agents/main/wire.jsonl` (metadata `protocol_version: "1.0"`, same turn
 records as migrated kimi-cli sessions), a `state.json` with
 `titleKind: "generated"`, `agents.main.parentAgentId: null`, and
 `custom: {imported_from: "claude-code" | "codex", imported_source_id,
-imported_source_path, imported_at}`, plus an `attachments/` directory holding
-the effective history and a source copy. Once released, the same conversation
-can therefore be indexed both from its original Claude Code / Codex file and
-as a Kimi session; `custom.imported_from` is the marker to recognize it.
+imported_source_path, imported_at}`, plus an `attachments/` directory. The same
+conversation can therefore be indexed both from its original Claude Code /
+Codex file and as a Kimi session; `custom.imported_from` is the marker. The
+parser already tolerates unknown wire record types, so 2.4.x is not a breakage.
 
 ---
 
