@@ -29,6 +29,15 @@
 - `flatpak_app/` is generated build output; do not edit it directly.
 
 
+## Cloud Agent environment
+Ubuntu 24.04's GTK 4.14 and GLib 2.80 are older than the `gnome_50` and libadwaita 1.9 features this crate enables. On a Cloud Agent, `cargo`, `rustc`, `rustdoc`, `rustfmt`, `cargo-clippy`, `clippy-driver`, `meson`, and `ninja` run inside a Fedora 44 rootfs at `/opt/fedora` (GTK 4.22, GLib 2.88, libadwaita 1.9, GtkSourceView 5.20). The host commands `dbus-run-session` and `xvfb-run` stay on Ubuntu and pass `DISPLAY` through.
+
+Launch the installed binary with `fedora-exec` (`/usr/local/bin/fedora-exec`). A direct `~/.local/bin/sessions-chronicle` launch uses Ubuntu's dynamic linker and does not see the Fedora libraries:
+
+```bash
+fedora-exec "$HOME/.local/bin/sessions-chronicle" --sessions-dir tests/fixtures
+```
+
 ## Fast Dev Loop
 - `flatpak-builder --user flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json --force-clean`: build the GNOME Flatpak bundle.
 - `flatpak-builder --run flatpak_app build-aux/dev.maciz.sessionschronicle.Devel.json sessions-chronicle`: run with local session data.
