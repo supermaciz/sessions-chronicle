@@ -561,7 +561,7 @@ changing its structure:
   being lost. Resumed sessions written by earlier versions may miss one entry.
 
 Added by the 2026-10-25/26 format-watch passes (changelog v2.1.303–v2.1.310,
-latest npm release 2.1.310; no fresh local capture yet, so the record shapes
+latest npm release then 2.1.310; no fresh local capture yet, so the record shapes
 below are not confirmed):
 
 - v2.1.304: in auto mode the safety classifier's context is no longer stored
@@ -583,6 +583,17 @@ below are not confirmed):
   left transcripts that `jq` could not parse. Transcripts written before
   v2.1.309 may contain an invalid JSONL line (exact byte shape not captured:
   escaped lone UTF-16 surrogate or invalid UTF-8).
+
+Added by the 2026-11-02 format-watch pass (changelog v2.1.311–v2.1.316, npm
+latest/next 2.1.316, stable 2.1.309, Agent SDK 0.3.316; no fresh local
+capture). Subagent path unchanged; no confirmed new top-level JSONL `type`:
+
+- v2.1.311: fixed `claude -p` and SDK sessions saving transcript messages out
+  of order or keeping messages that were taken back. Headless/SDK transcripts
+  written by earlier versions may have non-chronological lines or retracted
+  messages.
+- v2.1.314: `--resume` is faster and uses less memory on damaged transcripts
+  (no format change).
 
 ### Meta Flag
 
@@ -1012,6 +1023,7 @@ machine, and proxy low-skip workloads.
 - [Claude Code changelog (compaction/transcript behavior changes)](https://docs.anthropic.com/en/docs/claude-code/changelog)
 - [Claude Code CHANGELOG.md (v2.1.300 API request recording entry)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
 - [Claude Code CHANGELOG.md v2.1.304–v2.1.310 (transcript completeness entries)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21310)
+- [Claude Code CHANGELOG.md through 2.1.316](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21316)
 - [Claude Code model configuration (official; aliases, version history, full model names)](https://code.claude.com/docs/en/model-config)
 - [Models overview (API model IDs)](https://platform.claude.com/docs/en/about-claude/models/overview)
 - [Claude Code issue: duplicate entries in session logs](https://github.com/anthropics/claude-code/issues/1524)

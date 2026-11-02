@@ -44,6 +44,18 @@ Confirmed on 2026-10-14 from upstream `dev`
 > touch `session_v2` / `session_message` columns or a field the V2 reader reads.
 > Rows written before v2.1 keep the old shape (upgraded on read upstream by
 > `packages/schema/src/session-legacy.ts`).
+>
+> **Format watch 2026-11-02 (`dev` `67139d682`, still no tag past v2.1.4):**
+> `dev` adds `session_part` ([#58915](https://github.com/anomalyco/opencode/pull/58915),
+> migration `20261029002625_session_part`) — assistant parts can live in a
+> side table and be reconstituted into `data.content` on read; inserts still
+> write content inline, and `content: []` is only written when part rows
+> already exist. Additive `session_v2.time_busy`
+> ([#59910](https://github.com/anomalyco/opencode/pull/59910)), plus
+> `schedule` / `job` tables for experimental scheduling and background jobs.
+> The V2 reader still selects explicit `session_v2` / `session_message`
+> columns and only projects inline `content`, so it is **not broken** yet;
+> watch for a future backfill that empties inline content.
 
 ### Schema
 
