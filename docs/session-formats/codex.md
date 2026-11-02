@@ -27,14 +27,20 @@ new local rollout was captured.
 released 2026-10-29; also `rust-v0.165.0` on 2026-10-27; `main` `ba0d0e1f`;
 npm latest 0.166.0 / alpha 0.167.0-alpha.3). Diff vs 0.164.0: new persisted
 `RolloutItem::DynamicToolsUpdated`
-([`policy.rs`](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/rollout/src/policy.rs));
+([`policy.rs`](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/rollout/src/policy.rs)),
+written as a top-level rollout line
+`{"type":"dynamic_tools_updated","payload":{"thread_id","tools"}}`
+([`rollout_payload.rs`](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/history/src/rollout_payload.rs));
 `TurnContextItem` gains optional fields (`approvals_reviewer`,
 `permission_profile`, `active_permission_profile`,
 `file_system_sandbox_policy`, `collaboration_mode`, `multi_agent_version`,
 `realtime_active`, `cyber_access_program`, …) while `model` and `cwd` stay
 required; `AdditionalContextEntry` may carry an optional `name`. Paths and
-file naming unchanged. No new local rollout was captured; the parser's
-unknown-`response_item` arm should ignore `DynamicToolsUpdated`.
+file naming unchanged. No new local rollout was captured.
+`dynamic_tools_updated` is not a `response_item` payload: the parser's
+top-level `type` dispatch in `crates/core/src/parsers/codex.rs` only handles
+`response_item`, `turn_context` and `event_msg`, so these lines fall through
+the catch-all arm and are skipped.
 
 **Desktop/import watch: 2026-10-04; documented 2026-10-11.** The focused
 check below does not refresh the protocol comparison above.

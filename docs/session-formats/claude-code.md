@@ -584,6 +584,17 @@ below are not confirmed):
   v2.1.309 may contain an invalid JSONL line (exact byte shape not captured:
   escaped lone UTF-16 surrogate or invalid UTF-8).
 
+Added by the 2026-11-02 format-watch pass (changelog v2.1.311–v2.1.316, npm
+latest/next 2.1.316, stable 2.1.309, Agent SDK 0.3.316; no fresh local
+capture). Subagent path unchanged; no confirmed new top-level JSONL `type`:
+
+- v2.1.311: fixed `claude -p` and SDK sessions saving transcript messages out
+  of order or keeping messages that were taken back. Headless/SDK transcripts
+  written by earlier versions may have non-chronological lines or retracted
+  messages.
+- v2.1.314: `--resume` is faster and uses less memory on damaged transcripts
+  (no format change).
+
 ### Meta Flag
 
 - `isMeta: true` → Skip for title extraction (system-generated)
@@ -1011,8 +1022,6 @@ machine, and proxy low-skip workloads.
 - [Claude Code subagents docs (subagent transcript path)](https://docs.anthropic.com/en/docs/claude-code/sub-agents)
 - [Claude Code changelog (compaction/transcript behavior changes)](https://docs.anthropic.com/en/docs/claude-code/changelog)
 - [Claude Code CHANGELOG.md (v2.1.300 API request recording entry)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
-**Format watch 2026-11-02:** npm latest/next **2.1.316**, stable 2.1.309, Agent SDK 0.3.316. Changelog 2.1.311–2.1.316 (no fresh capture): `claude -p` / SDK could write transcript messages out of order or keep retracted messages (fixed in 2.1.311); `--resume` on damaged transcripts is faster/less memory-hungry (2.1.314). Subagent path unchanged. No confirmed new top-level JSONL `type`.
-
 - [Claude Code CHANGELOG.md v2.1.304–v2.1.310 (transcript completeness entries)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21310)
 - [Claude Code CHANGELOG.md through 2.1.316](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21316)
 - [Claude Code model configuration (official; aliases, version history, full model names)](https://code.claude.com/docs/en/model-config)
