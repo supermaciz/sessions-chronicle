@@ -15,7 +15,7 @@ tests/fixtures/
 ├── vibe_sessions/          # Mistral Vibe session samples (meta.json + JSONL)
 │   ├── unified/              # Mistral Vibe 3.0.x Unified stores (minor 9)
 │   └── session_20260203_191451_b9383361/ # Legacy meta.json + JSONL
-├── vibe_unified_variants/    # Minimal/corrupt/race stores for reader tests
+├── vibe_unified_variants/    # Minimal/corrupt/race stores, plus a minor-10 session
 ├── kimi_home/              # Synthetic current ~/.kimi-code session home
 ├── opencode.db             # OpenCode SQLite fixture (preferred backend)
 └── opencode_storage/       # OpenCode legacy JSON storage fixture (fallback backend)
@@ -78,8 +78,9 @@ Each session directory includes:
 Unified fixtures are under `vibe_sessions/unified/` and cover Vibe 3.0.0,
 3.0.1 and 3.0.2 store shapes (all store minor 9), including parent/child
 sessions. `vibe_unified_variants/` contains isolated edge-case stores copied
-into temporary locations by tests. Their independent stdlib generator and
-fixture inventory are documented in `vibe_unified_generator/README.md`.
+into temporary locations by tests, including `minor-10/` (Vibe ≥ 3.0.3,
+`store_format_minor` 10). Their independent stdlib generator and fixture
+inventory are documented in `vibe_unified_generator/README.md`.
 Regenerate the stores from the repository root with:
 
 ```bash

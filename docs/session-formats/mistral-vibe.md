@@ -22,14 +22,18 @@ or `session_logging.save_dir` in `config.toml`), so unified sessions live under
 the legacy format that the rest of this document describes.
 
 Upstream store identity: `mistral.vibe.unified-session-store/v1` with a
-`store_format_minor` revision counter. **Sessions Chronicle on `main` still
-accepts minor 9 only** (fixture-backed range: Vibe 3.0.0–3.0.2). Upstream
-[v3.0.3](https://github.com/mistralai/mistral-vibe/releases/tag/v3.0.3)
-(2026-10-26) bumped `STORE_FORMAT_MINOR` to **10**; PyPI is at 3.0.4. Stores
-written by Vibe ≥ 3.0.3 are therefore rejected today
-(`UnifiedError::Unsupported("store_format_minor 10")`) — **support for the
-current upstream unified format is broken** until the reader is updated.
-Legacy `session_*` directories are unaffected.
+`store_format_minor` revision counter. Sessions Chronicle accepts minors
+**9 and 10** and rejects every other minor. Minor 9 is Vibe 3.0.0–3.0.2.
+Minor 10 is what Vibe ≥ 3.0.3 writes
+([v3.0.3](https://github.com/mistralai/mistral-vibe/releases/tag/v3.0.3),
+2026-10-26; PyPI 3.0.4). That bump only omits configuration baselines from
+a generation's first `core_input` when the generation already records them
+(`checkpoint_capabilities`, `checkpoint_settings`, `checkpoint_plugins`,
+`checkpoint_system_instructions`). Conversion reads
+`runtime.session_metadata.active_model` and the public projection, not
+those fields, so the same reader handles both minors. Minor 8 and minor
+11+ stay `UnifiedError::Unsupported`. Legacy `session_*` directories are
+unaffected.
 
 ---
 
@@ -44,8 +48,10 @@ Confirmed from upstream source (`harness/runtimes/python/python/mistralai_vibe_l
 [`STORE_FORMAT_MINOR = 10`](https://github.com/mistralai/mistral-vibe/blob/v3.0.3/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py)
 since v3.0.3 (comment: a generation's first Core input omits each configuration
 baseline the generation already records). Upstream readers accept lower minors
-and reject higher ones; Sessions Chronicle still pins exact minor 9 in
-`crates/core/src/parsers/mistral_vibe_unified/store.rs`.
+and reject higher ones. Sessions Chronicle accepts the exact set {9, 10} in
+`crates/core/src/parsers/mistral_vibe_unified/store.rs` and rejects 8 and 11+.
+The minor-10 regression store is
+`tests/fixtures/vibe_unified_variants/minor-10/`.
 
 ### Storage & File Naming
 
@@ -100,7 +106,9 @@ A sibling `.session-index.json` catalog (maintained by
 }
 ```
 
-Upstream type: `CurrentPointerV1` in `_storage.py`.
+`store_format_minor` is `9` on Vibe 3.0.0–3.0.2 stores and `10` on Vibe ≥
+3.0.3 stores. Both values are accepted. Upstream type: `CurrentPointerV1`
+in `_storage.py`.
 
 ### `meta.json` Format (Unified)
 
@@ -275,7 +283,7 @@ Keep these version domains separate:
 
 | Version | Purpose |
 |---|---|
-| Vibe `store_format` / `store_format_minor` (reader still minor 9 only; upstream writes 10 since 3.0.3 — **broken**) | Which upstream on-disk format the reader accepts. |
+| Vibe `store_format` / `store_format_minor` (reader accepts 9 and 10; 8 and 11+ rejected) | Which upstream on-disk format the reader accepts. |
 | `UNIFIED_READER_VERSION` (currently 2) | Whether a prior successful Unified read may still be skipped. |
 | SQLite schema version | Structure of Sessions Chronicle's index database; changing reader semantics alone does not require a schema migration. |
 

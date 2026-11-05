@@ -69,6 +69,7 @@ V_DEEPER_CHILD = child_session_id(V_DEEPER, "act-spawn-child")
 V_DEEPER_GRANDCHILD = child_session_id(V_DEEPER_CHILD, "act-spawn-grand")
 V_EMPTY = "cccccccc-0000-4000-8000-00000000000b"
 V_RECOVERED = "cccccccc-0000-4000-8000-00000000000c"
+V_MINOR_10 = "cccccccc-0000-4000-8000-00000000000d"
 
 # --------------------------------------------------------------------------
 # Fixed fixture time base: every timestamp derives from T0, never the clock.
@@ -94,7 +95,11 @@ CWD_MOVED = "/home/fixture/projects/moved"
 CWD_VARIANT = "/home/fixture/projects/variant"
 PROJECTION_FORMAT = "harness.public-session-state/v1"
 STORE_FORMAT = "mistral.vibe.unified-session-store/v1"
+# Default written by the 3.0.0-3.0.2 fixtures. Minor 10 (Vibe >= 3.0.3) is
+# accepted too: its only change is omitting generation baselines from the
+# first core_input. The `minor-10` variant writes that minor explicitly.
 STORE_FORMAT_MINOR = 9
+ACCEPTED_STORE_FORMAT_MINORS = frozenset({9, 10})
 
 # The 14 journal record kinds (pinned fact E).
 RECORD_KINDS = (
@@ -221,6 +226,8 @@ def write_store(
     meta,
     saved_results: dict,
     journal_tail: bytes = b"",
+    *,
+    store_format_minor: int = STORE_FORMAT_MINOR,
 ):
     """Write one Unified session store under ``root/<session_id>/``.
 
@@ -328,7 +335,7 @@ def write_store(
         "session_id": session_id,
         "snapshot_sequence": snapshot_sequence,
         "store_format": STORE_FORMAT,
-        "store_format_minor": STORE_FORMAT_MINOR,
+        "store_format_minor": store_format_minor,
     }
     _write_bytes(store / "CURRENT", canonical(pointer) + b"\n")
 
@@ -1817,6 +1824,67 @@ def build_variants(variants_root: Path) -> int:
     )
     count += 1
 
+    # minor-10: Vibe >= 3.0.3. The generation already records the four
+    # configuration baselines, so the first core_input leaves them null.
+    # The transcript still comes from the projection (user message in the
+    # snapshot, assistant message appended by the following delta) and the
+    # model from runtime session_metadata.active_model.
+    minor_10_runtime = runtime(
+        "root", V_MINOR_10, V_MINOR_10, None, 0, CWD_VARIANT, "devstral-small-2",
+    )
+    minor_10_runtime["core_capabilities"] = {"catalog": "fixture-capabilities"}
+    minor_10_runtime["core_settings"] = {"max_turns": 4}
+    minor_10_runtime["core_plugins"] = [{"name": "fixture-plugin"}]
+    minor_10_runtime["core_system_instructions"] = (
+        "Fixture system instructions already on the generation."
+    )
+    question = message(
+        "u1", "user", "t1", ts(1), [text_block("Minor ten question")], source="turn_start",
+    )
+    answer = message(
+        "a1", "assistant", "t1", ts(2), [text_block("Minor ten answer")],
+        source="harness", outcome={"type": "committed"},
+    )
+    tokens = token_usage(30, 8, 38, 0)
+    write_store(
+        unified("minor-10"),
+        V_MINOR_10,
+        generation=1,
+        snapshot_sequence=1,
+        runtime_state=minor_10_runtime,
+        snapshot=with_history(
+            envelope(
+                V_MINOR_10, V_MINOR_10, None, "Minor ten question", T0, ts(2),
+                {"type": "idle"}, tokens, tokens, turn("completed", "t1", ts(1), ts(2)),
+            ),
+            [question],
+        ),
+        journal=[
+            {
+                "type": "core_input",
+                "payload": {
+                    "checkpoint_capabilities": None,
+                    "checkpoint_plugins": None,
+                    "checkpoint_settings": None,
+                    "checkpoint_system_instructions": None,
+                    "input": {"text": "Minor ten question"},
+                },
+            },
+            {
+                "type": "projection_delta",
+                "payload": {
+                    "watermark": 2,
+                    "delta": [{"op": "append_entry", "entry": answer}],
+                },
+            },
+        ],
+        chunk_split=None,
+        meta=None,
+        saved_results={},
+        store_format_minor=10,
+    )
+    count += 1
+
     return count
 
 
@@ -1889,8 +1957,14 @@ def replay_store(store: Path):
     if not (isinstance(generation, str) and len(generation) == 16
             and generation.isdigit()):
         raise ReplayError(f"CURRENT.generation is not 16 digits: {generation!r}")
-    if pointer["store_format"] != STORE_FORMAT or pointer["store_format_minor"] != STORE_FORMAT_MINOR:
-        raise ReplayError("CURRENT store_format is unsupported")
+    if (
+        pointer["store_format"] != STORE_FORMAT
+        or pointer["store_format_minor"] not in ACCEPTED_STORE_FORMAT_MINORS
+    ):
+        raise ReplayError(
+            "CURRENT store_format is unsupported: "
+            f"{pointer['store_format']} minor {pointer['store_format_minor']}"
+        )
     session_id = pointer["session_id"]
     snapshot_sequence = pointer["snapshot_sequence"]
 

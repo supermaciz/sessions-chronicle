@@ -19,7 +19,14 @@ pub use super::file_stats::FileSample;
 
 /// Pinned store format of the Unified session store (Vibe 3.0.x).
 const STORE_FORMAT: &str = "mistral.vibe.unified-session-store/v1";
-const STORE_FORMAT_MINOR: u64 = 9;
+/// Store format minors this reader accepts.
+///
+/// Minor 9 is Vibe 3.0.0–3.0.2. Minor 10 (Vibe >= 3.0.3) only stops repeating
+/// configuration baselines on a generation's first `core_input` when that
+/// generation already records them. Conversion reads `runtime.active_model`
+/// and the public projection, not those baseline fields, so both minors share
+/// this reader. Every other minor stays unsupported.
+const ACCEPTED_STORE_FORMAT_MINORS: [u64; 2] = [9, 10];
 /// Pinned snapshot format of the public session state.
 const PROJECTION_FORMAT: &str = "harness.public-session-state/v1";
 
@@ -179,7 +186,7 @@ pub(crate) fn load_generation(session_dir: &Path) -> Result<LoadedStore, Unified
         )));
     }
     let store_format_minor = field_u64(&pointer, "CURRENT", "store_format_minor")?;
-    if store_format_minor != STORE_FORMAT_MINOR {
+    if !ACCEPTED_STORE_FORMAT_MINORS.contains(&store_format_minor) {
         return Err(UnifiedError::Unsupported(format!(
             "store_format_minor {store_format_minor}"
         )));
@@ -1457,9 +1464,62 @@ mod tests {
         replace_current(
             &session,
             "\"store_format_minor\":9",
-            "\"store_format_minor\":10",
+            "\"store_format_minor\":11",
         );
         expect_variant(load_generation(&session), "Unsupported");
+    }
+
+    /// Minor 10 omits baselines the generation already records. The fixture's
+    /// first `core_input` leaves those fields null; the transcript and model
+    /// still come from the projection and `runtime.active_model`.
+    #[test]
+    fn parses_minor_10_session_from_projection_and_runtime_model() {
+        const MINOR_10: &str = "cccccccc-0000-4000-8000-00000000000d";
+        let rel = test_support::variant_rel("minor-10", MINOR_10);
+        let session = crate::fixture_path(&rel);
+        assert_eq!(read_pointer(&session)["store_format_minor"], 10);
+
+        let journal = fs::read_to_string(session.join("journal/0000000000000002.jsonl"))
+            .expect("minor-10 journal");
+        let first_record: Value = serde_json::from_str(journal.lines().next().expect("core_input"))
+            .expect("core_input json");
+        assert_eq!(first_record["type"], "core_input");
+        for field in [
+            "checkpoint_capabilities",
+            "checkpoint_settings",
+            "checkpoint_plugins",
+            "checkpoint_system_instructions",
+        ] {
+            assert!(
+                first_record["payload"][field].is_null(),
+                "{field} is already on the generation and must be omitted"
+            );
+        }
+        let runtime_raw = fs::read(generation_dir(&session).join("runtime-state.json")).unwrap();
+        let runtime: Value = serde_json::from_slice(&runtime_raw[..runtime_raw.len() - 1]).unwrap();
+        assert!(runtime["core_capabilities"].is_object());
+        assert!(runtime["core_settings"].is_object());
+        assert!(runtime["core_plugins"].is_array());
+        assert!(runtime["core_system_instructions"].is_string());
+        assert_eq!(
+            runtime["session_metadata"]["active_model"],
+            "devstral-small-2"
+        );
+
+        let parsed = test_support::parse_fixture(&rel).expect("minor 10 store must parse");
+        assert_eq!(parsed.parsed.session.id, MINOR_10);
+        assert_eq!(
+            parsed.parsed.session.first_prompt.as_deref(),
+            Some("Minor ten question")
+        );
+        let messages = &parsed.parsed.messages;
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, crate::models::Role::User);
+        assert_eq!(messages[0].content, "Minor ten question");
+        assert_eq!(messages[0].model, None);
+        assert_eq!(messages[1].role, crate::models::Role::Assistant);
+        assert_eq!(messages[1].content, "Minor ten answer");
+        assert_eq!(messages[1].model.as_deref(), Some("devstral-small-2"));
     }
 
     #[test]

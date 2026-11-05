@@ -26,7 +26,7 @@ Writes (overwriting in place, never deleting):
 - the legacy pair `tests/fixtures/vibe_sessions/session_20261020_100000_bbbbbbbb/`
   (`meta.json` + `messages.jsonl`) that the migrated session's
   `import_provenance` points at
-- 18 variant stores under `tests/fixtures/vibe_unified_variants/<name>/unified/`
+- 19 variant stores under `tests/fixtures/vibe_unified_variants/<name>/unified/`
   plus the sibling `tests/fixtures/vibe_unified_variants/growing/append.jsonl`
 
 and prints the derived child session IDs (pinned fact J:
@@ -186,7 +186,7 @@ cccccccc-0000-4000-8000-000000000004 entries=3
 | `child-4c966d1f1f932580b090cfb5` | subagent of the fork |
 | `aaaaaaaa-0000-4000-8000-000000000004` | legacy import (`import_provenance.source.backend = "legacy"`, session `bbbbbbbb-0000-4000-8000-000000000004`) |
 | `session_20261020_100000_bbbbbbbb/` | legacy pair the import points at (outside `unified/`) |
-| variants `ephemeral`, `deleting/active`, `deleting/deleting`, `rollover/gen1`, `rollover/gen2`, `growing`, `unknown-op`, `unknown-record`, `unknown-entry`, `unknown-checkpoint`, `unknown-status`, `deeper`, `empty`, `recovered` | minimal stores (IDs `cccccccc-0000-4000-8000-0000000000NN`) exercising one behavior each; `unknown-*` are intentionally rejected by a correct reader |
+| variants `ephemeral`, `deleting/active`, `deleting/deleting`, `rollover/gen1`, `rollover/gen2`, `growing`, `unknown-op`, `unknown-record`, `unknown-entry`, `unknown-checkpoint`, `unknown-status`, `deeper`, `empty`, `recovered`, `minor-10` | minimal stores (IDs `cccccccc-0000-4000-8000-0000000000NN`) exercising one behavior each; `unknown-*` are intentionally rejected by a correct reader. `minor-10` is a Vibe ≥ 3.0.3 store (`store_format_minor` 10) whose first `core_input` omits baselines the generation already records |
 
 Note: these fixtures temporarily change the legacy Vibe session count under
 `tests/fixtures/vibe_sessions/` (the unified reader ships in a later task),
