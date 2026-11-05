@@ -49,6 +49,14 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.11.2" date="2026-11-05">
+      <description>
+        <p>A patch release extending Mistral Vibe unified session support.</p>
+        <ul>
+          <li>Accept store format minor 10 written by Mistral Vibe 3.0.3 and newer</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.11.1" date="2026-10-28">
       <description>
         <p>Maintenance release with updated dependencies.</p>
