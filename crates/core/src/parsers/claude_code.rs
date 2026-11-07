@@ -513,7 +513,13 @@ impl ParseState {
 
             // Extract and record tool_use blocks (regular tools and Task/Agent subagents)
             for block in arr {
-                self.record_tool_use(block, &session_id, timestamp, &parse_timestamp);
+                self.record_tool_use(
+                    block,
+                    &session_id,
+                    timestamp,
+                    model.as_deref(),
+                    &parse_timestamp,
+                );
             }
             return;
         }
@@ -611,6 +617,7 @@ impl ParseState {
         block: &Value,
         _session_id: &str,
         timestamp: DateTime<Utc>,
+        model: Option<&str>,
         _parse_timestamp: impl Fn(&str) -> Result<DateTime<Utc>>,
     ) {
         if block.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
@@ -624,6 +631,12 @@ impl ParseState {
                 return;
             }
         };
+        // Repeated blocks must not replace the original call or its attribution.
+        if self.pending_calls.contains_key(&tool_use_id)
+            || self.pending_subagents.contains_key(&tool_use_id)
+        {
+            return;
+        }
         let tool_name = block
             .get("name")
             .and_then(|v| v.as_str())
@@ -659,7 +672,7 @@ impl ParseState {
                     .collect::<String>()
             });
             self.subagents.push(Subagent {
-                source_model: None,
+                source_model: model.map(str::to_string),
                 id: tool_use_id.clone(),
                 agent_id: None,
                 agent_name,
@@ -676,7 +689,7 @@ impl ParseState {
         } else {
             // Regular tool call
             self.tool_calls.push(ToolCall {
-                model: None,
+                model: model.map(str::to_string),
                 id: tool_use_id.clone(),
                 session_id: String::new(),
                 subagent_id: None,
@@ -1031,6 +1044,111 @@ mod tests {
         }
         file.flush().unwrap();
         file
+    }
+
+    #[test]
+    fn tool_only_response_carries_event_model() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"claude-opus-4-1","content":[{"type":"tool_use","id":"toolu_a","name":"Read","input":{}},{"type":"tool_use","id":"toolu_b","name":"Grep","input":{}}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{"model":"claude-sonnet-4-5","content":"Later"}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"done"}]}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 2);
+        for call in &parsed.tool_calls {
+            assert_eq!(call.model.as_deref(), Some("claude-opus-4-1"));
+        }
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn delegation_keeps_parent_model_not_requested_model() {
+        for name in ["Agent", "Task"] {
+            let event = format!(
+                r#"{{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{{"model":"claude-opus-4-1","content":[{{"type":"tool_use","id":"a","name":"{name}","input":{{"description":"d","prompt":"p","model":"haiku","name":"scout"}}}}]}}}}"#
+            );
+            let file = create_temp_session(&[
+                r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Hello"}}"#,
+                &event,
+            ]);
+            let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+            assert_eq!(parsed.subagents.len(), 1);
+            assert_eq!(
+                parsed.subagents[0].source_model.as_deref(),
+                Some("claude-opus-4-1")
+            );
+            assert_eq!(parsed.subagents[0].agent_name.as_deref(), Some("scout"));
+        }
+    }
+
+    #[test]
+    fn tool_use_with_synthetic_or_blank_model_is_unattributed() {
+        for model in [
+            r#""model":"<synthetic>","#,
+            r#""model":"   ","#,
+            r#""model":42,"#,
+            "",
+        ] {
+            let event = format!(
+                r#"{{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{{{model}"content":[{{"type":"tool_use","id":"a","name":"Read","input":{{}}}}]}}}}"#
+            );
+            let file = create_temp_session(&[
+                r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Hello"}}"#,
+                &event,
+                r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{"model":"real","content":"Done"}}"#,
+            ]);
+            let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+            assert_eq!(parsed.tool_calls.len(), 1);
+            assert_eq!(parsed.tool_calls[0].model, None);
+        }
+    }
+
+    #[test]
+    fn duplicate_tool_use_keeps_first_attribution_through_storage_and_reindex() {
+        use crate::database::{
+            insert_subagent, insert_tool_call, load_subagent, load_tool_call, schema,
+        };
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"s","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"opus","content":[{"type":"tool_use","id":"t","name":"Read","input":{}},{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{"model":"sonnet","content":[{"type":"tool_use","id":"t","name":"Read","input":{}},{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"done"},{"type":"tool_result","tool_use_id":"a","content":"agent done"}]}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        let db = NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        schema::initialize_database(&conn).unwrap();
+        for call in &parsed.tool_calls {
+            insert_tool_call(&conn, call, "s").unwrap();
+        }
+        for agent in &parsed.subagents {
+            insert_subagent(&conn, agent, "s").unwrap();
+        }
+        let call = load_tool_call(db.path(), "s", "t").unwrap().unwrap();
+        let agent = load_subagent(db.path(), "s", "a").unwrap().unwrap();
+        assert_eq!(call.model.as_deref(), Some("opus"));
+        assert_eq!(call.status, ToolCallStatus::Completed);
+        assert_eq!(agent.source_model.as_deref(), Some("opus"));
+        assert_eq!(agent.result_summary.as_deref(), Some("agent done"));
+
+        let mut call = call;
+        let mut agent = agent;
+        call.model = None;
+        agent.source_model = None;
+        insert_tool_call(&conn, &call, "s").unwrap();
+        insert_subagent(&conn, &agent, "s").unwrap();
+        assert_eq!(
+            load_tool_call(db.path(), "s", "t").unwrap().unwrap().model,
+            None
+        );
+        assert_eq!(
+            load_subagent(db.path(), "s", "a")
+                .unwrap()
+                .unwrap()
+                .source_model,
+            None
+        );
     }
 
     #[test]
