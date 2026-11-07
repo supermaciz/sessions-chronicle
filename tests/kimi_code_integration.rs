@@ -525,7 +525,7 @@ fn v21_upgrade_incrementally_restores_kimi_children_and_links() {
         connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        22
+        23
     );
     let result = indexer.index_all_incremental(&sources).unwrap();
     assert_eq!(result.per_source[4].errors, 0);

@@ -3837,6 +3837,7 @@ mod tests {
 
         // 3 edits, 2 commands, 1 read — last call is Completed
         let make_tc = |id: &str, tool_name: &str, status: ToolCallStatus| ToolCall {
+            model: None,
             id: id.to_string(),
             session_id: "activity-test".to_string(),
             subagent_id: None,
@@ -3891,6 +3892,7 @@ mod tests {
 
         let mut parsed = parsed_session("abrupt-test", Some("/tmp/project"));
         parsed.tool_calls = vec![ToolCall {
+            model: None,
             id: "tc1".to_string(),
             session_id: "abrupt-test".to_string(),
             subagent_id: None,

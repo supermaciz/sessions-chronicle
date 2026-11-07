@@ -2814,6 +2814,7 @@ fn match_agent_calls(
             taken.insert(member.agent_id.clone());
             consumed_at.insert(member.agent_id.clone(), candidate.transcript_item_index);
             parent.subagents.push(Subagent {
+                source_model: None,
                 id,
                 agent_id: Some(member.agent_id.clone()),
                 agent_name: child.profile_name.map(str::to_string).or_else(|| {
@@ -2936,6 +2937,7 @@ fn match_agent_calls(
             item.subagent_id = Some(subagent_id.clone());
         }
         parent.subagents.push(Subagent {
+            source_model: None,
             id: subagent_id,
             agent_id: Some(agent_id.clone()),
             agent_name: child
@@ -3483,6 +3485,7 @@ fn push_tool_call(
     let item_index = transcript_items.len() as i64;
     let tool_index = tool_calls.len();
     tool_calls.push(ToolCall {
+        model: None,
         id: local_id.clone(),
         session_id: session_id.to_string(),
         subagent_id: None,

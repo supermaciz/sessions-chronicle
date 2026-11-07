@@ -1208,8 +1208,8 @@ pub fn insert_tool_call(conn: &Connection, tc: &ToolCall, session_id: &str) -> R
     conn.execute(
         "INSERT OR REPLACE INTO tool_calls
          (id, session_id, subagent_id, tool_name, status, title, summary,
-          input_json, output_text, error_text, started_at, ended_at, duration_ms, parser_call_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+          input_json, output_text, error_text, started_at, ended_at, duration_ms, parser_call_id, model)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         rusqlite::params![
             tc.id,
             session_id,
@@ -1225,6 +1225,7 @@ pub fn insert_tool_call(conn: &Connection, tc: &ToolCall, session_id: &str) -> R
             tc.ended_at,
             tc.duration_ms,
             tc.parser_call_id,
+            tc.model,
         ],
     )
     .context("Failed to insert tool call")?;
@@ -1235,8 +1236,8 @@ pub fn insert_tool_call(conn: &Connection, tc: &ToolCall, session_id: &str) -> R
 pub fn insert_subagent(conn: &Connection, sa: &Subagent, session_id: &str) -> Result<()> {
     conn.execute(
         "INSERT OR REPLACE INTO subagents
-         (id, agent_id, agent_name, session_id, title, prompt, result_summary, child_session_id, parser_ref)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         (id, agent_id, agent_name, session_id, title, prompt, result_summary, child_session_id, parser_ref, source_model)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             sa.id,
             sa.agent_id,
@@ -1247,6 +1248,7 @@ pub fn insert_subagent(conn: &Connection, sa: &Subagent, session_id: &str) -> Re
             sa.result_summary,
             sa.child_session_id,
             sa.parser_ref,
+            sa.source_model,
         ],
     )
     .context("Failed to insert subagent")?;
@@ -1339,7 +1341,7 @@ pub fn load_tool_call(
     let mut stmt = db.prepare(
         "SELECT id, session_id, subagent_id, tool_name, status, title, summary,
                 input_json, output_text, error_text, started_at, ended_at,
-                duration_ms, parser_call_id
+                duration_ms, parser_call_id, model
          FROM tool_calls
          WHERE session_id = ?1 AND id = ?2",
     )?;
@@ -1349,6 +1351,7 @@ pub fn load_tool_call(
     if let Some(row) = rows.next()? {
         let status_str: String = row.get(4)?;
         Ok(Some(ToolCall {
+            model: row.get(14)?,
             id: row.get(0)?,
             session_id: row.get(1)?,
             subagent_id: row.get(2)?,
@@ -1380,7 +1383,7 @@ pub fn load_subagent(
     }
     let db = open_connection(db_path)?;
     let mut stmt = db.prepare(
-        "SELECT id, agent_id, agent_name, session_id, title, prompt, result_summary, child_session_id, parser_ref
+        "SELECT id, agent_id, agent_name, session_id, title, prompt, result_summary, child_session_id, parser_ref, source_model
           FROM subagents
           WHERE session_id = ?1 AND id = ?2",
     )?;
@@ -1389,6 +1392,7 @@ pub fn load_subagent(
         .context("Failed to query subagent")?;
     if let Some(row) = rows.next()? {
         Ok(Some(Subagent {
+            source_model: row.get(9)?,
             id: row.get(0)?,
             agent_id: row.get(1)?,
             agent_name: row.get(2)?,

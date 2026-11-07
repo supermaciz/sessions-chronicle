@@ -2,7 +2,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 #[cfg(test)]
-const CURRENT_DB_VERSION: i64 = 22;
+const CURRENT_DB_VERSION: i64 = 23;
 
 fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     Ok(conn.query_row(
@@ -71,6 +71,7 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
 ///        per-representation proven ineligibility and retry state
 ///   21 – vibe_unified_signatures stores Unified Mistral Vibe freshness inputs
 ///   22 – clear Kimi Code bundle fingerprints so subagents, swarms and usage are re-parsed
+///   23 – tool_calls.model and subagents.source_model (assistant attribution); clears file_fingerprints so all file-tracked sessions are re-parsed
 pub fn initialize_database(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
 
@@ -139,6 +140,9 @@ pub fn initialize_database(conn: &Connection) -> Result<()> {
     }
     if version < 22 {
         apply_v22_migration(conn)?;
+    }
+    if version < 23 {
+        apply_v23_migration(conn)?;
     }
 
     Ok(())
@@ -869,10 +873,103 @@ fn apply_v22_migration(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn apply_v23_migration(conn: &Connection) -> Result<()> {
+    for (table, column) in [("tool_calls", "model"), ("subagents", "source_model")] {
+        if table_exists(conn, table)? && !column_exists(conn, table, column)? {
+            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT"), [])?;
+        }
+    }
+    if table_exists(conn, "file_fingerprints")? {
+        conn.execute("DELETE FROM file_fingerprints", [])?;
+    }
+    conn.execute_batch("PRAGMA user_version = 23")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn fresh_database_has_model_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        assert!(super::column_exists(&conn, "tool_calls", "model").unwrap());
+        assert!(super::column_exists(&conn, "subagents", "source_model").unwrap());
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            CURRENT_DB_VERSION
+        );
+    }
+
+    #[test]
+    fn migration_v23_adds_model_columns_and_clears_fingerprints() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_database(&conn).unwrap();
+        conn.execute_batch("ALTER TABLE tool_calls DROP COLUMN model; ALTER TABLE subagents DROP COLUMN source_model; PRAGMA user_version = 22;
+            INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, pinned_at) VALUES ('keep', 'claude_code', 1, 1, '/claude', 2, 777);
+            INSERT INTO tool_calls (id, session_id, tool_name, status) VALUES ('t', 'keep', 'Read', 'completed');
+            INSERT INTO subagents (id, session_id, title) VALUES ('a', 'keep', 'agent');
+            INSERT INTO file_fingerprints (file_path, size, mtime_ns) VALUES ('/claude', 1, 2), ('/kimi', 1, 2);
+            INSERT INTO opencode_source_fingerprints VALUES ('db', 1, 2, 3, 4, 5);
+            INSERT INTO opencode_source_sessions VALUES ('db', 's', 'sqlite', 1, 1);
+            INSERT INTO vibe_unified_signatures VALUES ('dir', 'sig');").unwrap();
+        initialize_database(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            23
+        );
+        assert!(super::column_exists(&conn, "tool_calls", "model").unwrap());
+        assert!(super::column_exists(&conn, "subagents", "source_model").unwrap());
+        assert_eq!(
+            conn.query_row("SELECT model FROM tool_calls WHERE id='t'", [], |r| r
+                .get::<_, Option<String>>(0))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            conn.query_row("SELECT source_model FROM subagents WHERE id='a'", [], |r| r
+                .get::<_, Option<String>>(0))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            conn.query_row("SELECT pinned_at FROM sessions WHERE id='keep'", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
+            777
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM file_fingerprints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(conn.query_row("SELECT db_mtime_ns || ',' || db_size || ',' || wal_mtime_ns || ',' || wal_size || ',' || reader_generation FROM opencode_source_fingerprints WHERE db_path='db'", [], |r| r.get::<_, String>(0)).unwrap(), "1,2,3,4,5");
+        assert_eq!(conn.query_row("SELECT generation || ',' || ineligible || ',' || retry_required FROM opencode_source_sessions WHERE db_path='db' AND session_id='s'", [], |r| r.get::<_, String>(0)).unwrap(), "sqlite,1,1");
+        assert_eq!(
+            conn.query_row(
+                "SELECT signature FROM vibe_unified_signatures WHERE session_dir='dir'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "sig"
+        );
+        conn.execute("INSERT INTO file_fingerprints VALUES ('new', 1, 2)", [])
+            .unwrap();
+        initialize_database(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM file_fingerprints", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
 
     #[test]
     fn migration_v21_creates_vibe_unified_signatures() {
@@ -881,7 +978,7 @@ mod tests {
         conn.execute_batch("DROP TABLE vibe_unified_signatures; PRAGMA user_version=20; INSERT INTO file_fingerprints(file_path, size, mtime_ns) VALUES ('preserved', 1, 2);").unwrap();
         conn.execute_batch("INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, pinned_at) VALUES ('preserved', 'mistral_vibe', 1, 1, 'legacy/session', 2, 1234); INSERT INTO messages(session_id, message_index, role, content, timestamp) VALUES ('preserved', 0, 'user', 'preserved prompt', 1);").unwrap();
         initialize_database(&conn).unwrap();
-        assert_eq!(CURRENT_DB_VERSION, 22);
+        assert_eq!(CURRENT_DB_VERSION, 23);
         assert_eq!(
             conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
@@ -910,7 +1007,7 @@ mod tests {
             conn.query_row("SELECT count(*) FROM file_fingerprints", [], |r| r
                 .get::<_, i64>(0))
                 .unwrap(),
-            1
+            0 // v23 clears all fingerprints
         );
         conn.execute(
             "INSERT INTO vibe_unified_signatures VALUES ('session', 'signature')",
@@ -950,7 +1047,7 @@ mod tests {
         )
         .unwrap();
 
-        initialize_database(&conn).unwrap();
+        apply_v22_migration(&conn).unwrap();
 
         let version = conn
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
@@ -2320,9 +2417,9 @@ mod tests {
         assert!(!table_exists(&conn, "context_entries"));
         assert!(!column_exists(&conn, "transcript_items", "context_id").unwrap());
 
-        initialize_database(&conn).unwrap();
+        apply_v19_migration(&conn).unwrap();
 
-        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
+        assert_eq!(count(&conn, "PRAGMA user_version"), 19);
         assert!(column_exists(&conn, "transcript_items", "context_id").unwrap());
         for table in [
             "context_entries",
@@ -2418,8 +2515,10 @@ mod tests {
             [],
         )
         .unwrap();
-        initialize_database(&conn).unwrap();
-        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
+        if count(&conn, "PRAGMA user_version") < 19 {
+            apply_v19_migration(&conn).unwrap();
+        }
+        assert_eq!(count(&conn, "PRAGMA user_version"), 19);
         assert_eq!(
             count(&conn, "SELECT count(*) FROM opencode_source_fingerprints"),
             1
@@ -2478,10 +2577,12 @@ mod tests {
             "SELECT file_path FROM file_fingerprints ORDER BY file_path",
         );
 
-        initialize_database(&conn).unwrap();
-        initialize_database(&conn).unwrap();
+        apply_v20_migration(&conn).unwrap();
+        if count(&conn, "PRAGMA user_version") < 20 {
+            apply_v20_migration(&conn).unwrap();
+        }
 
-        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
+        assert_eq!(count(&conn, "PRAGMA user_version"), 20);
         assert_eq!(
             string_rows(
                 &conn,

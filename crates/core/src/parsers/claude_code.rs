@@ -659,6 +659,7 @@ impl ParseState {
                     .collect::<String>()
             });
             self.subagents.push(Subagent {
+                source_model: None,
                 id: tool_use_id.clone(),
                 agent_id: None,
                 agent_name,
@@ -675,6 +676,7 @@ impl ParseState {
         } else {
             // Regular tool call
             self.tool_calls.push(ToolCall {
+                model: None,
                 id: tool_use_id.clone(),
                 session_id: String::new(),
                 subagent_id: None,

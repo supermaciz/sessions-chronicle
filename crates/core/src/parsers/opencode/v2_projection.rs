@@ -288,6 +288,7 @@ impl V2Projection {
             });
 
         Subagent {
+            source_model: None,
             id,
             agent_id: None,
             agent_name: input
@@ -399,6 +400,7 @@ impl V2Projection {
         // No matching task (or an ambiguous tie): retain a stable standalone
         // subagent row keyed by the native message id.
         let subagent = Subagent {
+            source_model: None,
             id: row.id.clone(),
             agent_id: None,
             agent_name: None,
@@ -638,6 +640,7 @@ fn project_tool(session_id: &str, content: &Value) -> Result<ToolCall> {
     };
 
     Ok(ToolCall {
+        model: None,
         id,
         session_id: session_id.to_string(),
         subagent_id: None,

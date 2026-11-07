@@ -294,6 +294,7 @@ impl ParseState {
         }
         let tc_idx = self.tool_calls.len();
         self.tool_calls.push(ToolCall {
+            model: None,
             id: call_id.clone(),
             session_id: self.session_id.clone(),
             subagent_id: None,
@@ -388,6 +389,7 @@ impl ParseState {
 
         let subagent_idx = self.subagents.len();
         self.subagents.push(Subagent {
+            source_model: None,
             id: id.clone(),
             agent_id: agent_id.clone(),
             agent_name: None,

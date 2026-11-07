@@ -240,6 +240,7 @@ impl MistralVibeParser {
 
                                 pending_subagent_calls.insert(raw_id, sa_idx);
                                 subagents.push(Subagent {
+                                    source_model: None,
                                     id: subagent_id.clone(),
                                     agent_id: agent_name.clone(),
                                     agent_name: None,
@@ -274,6 +275,7 @@ impl MistralVibeParser {
 
                             pending_calls.insert(raw_id, tc_idx);
                             tool_calls.push(ToolCall {
+                                model: None,
                                 id: tc_id.clone(),
                                 session_id: session_id.clone(),
                                 subagent_id: None,

@@ -447,6 +447,7 @@ impl OpenCodeParser {
                     let result_summary = output_text.or(error_text);
 
                     return PartOutcome::Subagent(Subagent {
+                        source_model: None,
                         id: format!("{}-{}-{}", session_id, message_id, part.id),
                         agent_id: None,
                         agent_name: None,
@@ -478,6 +479,7 @@ impl OpenCodeParser {
                     .map(str::to_string);
 
                 PartOutcome::ToolCall(ToolCall {
+                    model: None,
                     id: format!("{}-{}-{}", session_id, message_id, part.id),
                     session_id: session_id.to_string(),
                     subagent_id: None,
@@ -520,6 +522,7 @@ impl OpenCodeParser {
                     .map(str::to_string);
 
                 PartOutcome::Subagent(Subagent {
+                    source_model: None,
                     id: format!("{}-{}-{}", session_id, message_id, part.id),
                     agent_id: None,
                     agent_name: None,
