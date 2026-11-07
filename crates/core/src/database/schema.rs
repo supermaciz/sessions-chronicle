@@ -2501,8 +2501,19 @@ mod tests {
             count(&conn, "SELECT count(*) FROM opencode_source_fingerprints"),
             0
         );
+    }
 
-        // Re-initialising is a no-op: nothing is re-seeded or cleared again.
+    #[test]
+    fn reopening_current_database_preserves_reseeded_caches() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_to_v18(&conn);
+        seed_v18_cache(&conn);
+        initialize_database(&conn).unwrap();
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
+
+        // Restore entries after all migrations, including v23's invalidation.
+        conn.execute_batch("INSERT INTO file_fingerprints (file_path, mtime_ns, size) VALUES
+            ('/data/opencode.db', 1, 10), ('/data/claude/cl_one.jsonl', 4, 10), ('/data/unrelated.jsonl', 5, 10);").unwrap();
         conn.execute(
             "INSERT INTO opencode_source_fingerprints
              (db_path, db_mtime_ns, db_size, wal_mtime_ns, wal_size, reader_generation)
@@ -2515,10 +2526,15 @@ mod tests {
             [],
         )
         .unwrap();
-        if count(&conn, "PRAGMA user_version") < 19 {
-            apply_v19_migration(&conn).unwrap();
-        }
-        assert_eq!(count(&conn, "PRAGMA user_version"), 19);
+        conn.execute("INSERT INTO opencode_source_sessions (db_path, session_id, generation, ineligible, retry_required) VALUES ('/data/opencode.db', 'oc_sqlite', 'v2', 1, 1)", []).unwrap();
+        conn.execute(
+            "INSERT INTO vibe_unified_signatures VALUES ('dir', 'signature')",
+            [],
+        )
+        .unwrap();
+
+        initialize_database(&conn).unwrap();
+        assert_eq!(count(&conn, "PRAGMA user_version"), CURRENT_DB_VERSION);
         assert_eq!(
             count(&conn, "SELECT count(*) FROM opencode_source_fingerprints"),
             1
@@ -2530,8 +2546,40 @@ mod tests {
             ),
             ["v2"]
         );
-        assert_eq!(count(&conn, "SELECT count(*) FROM file_fingerprints"), 2);
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT file_path || '@' || mtime_ns FROM file_fingerprints ORDER BY file_path"
+            ),
+            [
+                "/data/claude/cl_one.jsonl@4",
+                "/data/opencode.db@1",
+                "/data/unrelated.jsonl@5"
+            ]
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT generation || ':' || ineligible || ':' || retry_required FROM opencode_source_sessions WHERE session_id = 'oc_sqlite'"
+            ),
+            ["v2:1:1"]
+        );
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT signature FROM vibe_unified_signatures WHERE session_dir = 'dir'"
+            ),
+            ["signature"]
+        );
         assert_eq!(count(&conn, "SELECT count(*) FROM sessions"), 3);
+        assert_eq!(count(&conn, "SELECT count(*) FROM messages"), 3);
+        assert_eq!(
+            string_rows(
+                &conn,
+                "SELECT id || '=' || pinned_at FROM sessions ORDER BY id"
+            ),
+            ["cl_one=99", "oc_json=77", "oc_sqlite=42"]
+        );
     }
 
     #[test]
@@ -2578,9 +2626,6 @@ mod tests {
         );
 
         apply_v20_migration(&conn).unwrap();
-        if count(&conn, "PRAGMA user_version") < 20 {
-            apply_v20_migration(&conn).unwrap();
-        }
 
         assert_eq!(count(&conn, "PRAGMA user_version"), 20);
         assert_eq!(
