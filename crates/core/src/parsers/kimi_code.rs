@@ -1172,6 +1172,256 @@ mod tests {
     }
 
     #[test]
+    fn tool_calls_take_their_step_model_and_survive_results() {
+        let parsed = parse_agents_bundle(
+            state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Inspect"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-1","turnStep":"0.1"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_0","name":"Bash"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"step-1"}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-2","turnStep":"0.2"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-2","turnId":"0","step":2}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","stepUuid":"step-2","toolCallId":"Bash_1","name":"Bash"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","stepUuid":"step-1","toolCallId":"Bash_old","name":"Bash"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"Bash_0","result":{"output":"first"}}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"Bash_1","result":{"output":"second"}}}"#,
+            ],
+            &[],
+        ).main;
+
+        assert_eq!(parsed.tool_calls.len(), 3);
+        assert_eq!(
+            parsed.tool_calls[0].parser_call_id.as_deref(),
+            Some("Bash_0")
+        );
+        assert_eq!(parsed.tool_calls[0].model.as_deref(), Some("m-1"));
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+        assert_eq!(parsed.tool_calls[0].output_text.as_deref(), Some("first"));
+        assert_eq!(
+            parsed.tool_calls[1].parser_call_id.as_deref(),
+            Some("Bash_1")
+        );
+        assert_eq!(parsed.tool_calls[1].model.as_deref(), Some("m-2"));
+        assert_eq!(parsed.tool_calls[1].status, ToolCallStatus::Completed);
+        assert_eq!(parsed.tool_calls[1].output_text.as_deref(), Some("second"));
+        assert_eq!(parsed.tool_calls[2].model.as_deref(), Some("m-1"));
+    }
+
+    #[test]
+    fn tool_call_without_step_uuid_uses_open_step_and_never_previous_turn() {
+        let parsed = parse_agents_bundle(
+            state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"First"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-1","turnStep":"0.1"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_0","name":"Bash"}}"#,
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Next"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_1","name":"Bash"}}"#,
+                r#"{"type":"config.update","modelAlias":"hint"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-2","turnId":"1","step":1}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_2","name":"Bash"}}"#,
+            ],
+            &[],
+        ).main;
+
+        assert_eq!(parsed.tool_calls.len(), 3);
+        assert_eq!(parsed.tool_calls[0].model.as_deref(), Some("m-1"));
+        assert_eq!(parsed.tool_calls[1].model, None);
+        assert_eq!(parsed.tool_calls[2].model.as_deref(), Some("hint"));
+    }
+
+    #[test]
+    fn explicit_unknown_step_uuid_never_uses_open_step_model() {
+        let parsed = parse_agents_bundle(
+            state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Inspect"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-1","turnStep":"0.1"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","stepUuid":"unknown","toolCallId":"Bash_unknown","name":"Bash"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","stepUuid":"  ","toolCallId":"Bash_blank","name":"Bash"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","stepUuid":42,"toolCallId":"Bash_malformed","name":"Bash"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","stepUuid":null,"toolCallId":"Bash_null","name":"Bash"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_implicit","name":"Bash"}}"#,
+            ],
+            &[],
+        ).main;
+
+        assert_eq!(parsed.tool_calls.len(), 5);
+        for call in &parsed.tool_calls[..4] {
+            assert_eq!(call.model, None, "{:?}", call.parser_call_id);
+        }
+        assert_eq!(parsed.tool_calls[4].model.as_deref(), Some("m-1"));
+    }
+
+    #[test]
+    fn step_end_closes_implicit_tool_call_attribution() {
+        let parsed = parse_agents_bundle(
+            state(),
+            &[
+                r#"{"type":"turn.prompt","input":[{"type":"text","text":"Inspect"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-1","turnStep":"0.1"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"other-step"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_0","name":"Bash"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"step-1"}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_1","name":"Bash"}}"#,
+            ],
+            &[],
+        ).main;
+
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert_eq!(parsed.tool_calls[0].model.as_deref(), Some("m-1"));
+        assert_eq!(parsed.tool_calls[1].model, None);
+    }
+
+    #[test]
+    fn fallback_user_message_closes_implicit_tool_call_attribution() {
+        let parsed = parse_agents_bundle(
+            state(),
+            &[
+                r#"{"type":"context.append_message","message":{"role":"user","origin":{"kind":"user"},"content":[{"type":"text","text":"First"}]}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-1","turnStep":"0.1"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_0","name":"Bash"}}"#,
+                r#"{"type":"context.append_message","message":{"role":"user","origin":{"kind":"user"},"content":[{"type":"text","text":"Next"}]}}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_1","name":"Bash"}}"#,
+            ],
+            &[],
+        ).main;
+
+        assert_eq!(parsed.messages.len(), 2);
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert_eq!(parsed.tool_calls[0].model.as_deref(), Some("m-1"));
+        assert_eq!(parsed.tool_calls[1].model, None);
+    }
+
+    #[test]
+    fn matched_agent_keeps_call_step_model() {
+        let parsed = parse_agents_bundle(
+            sub_state(),
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"llm.request","modelAlias":"parent-model","turnStep":"0.1"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.call","toolCallId":"Agent_0","name":"Agent","args":{"agent_id":"agent-0","subagent_type":"explore","prompt":"Inspect parser safety"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.result","toolCallId":"Agent_0","result":{"output":"done"}}}"#,
+            ],
+            &[(
+                "agent-0",
+                &[
+                    r#"{"type":"turn.prompt","time":1785320000025,"input":[{"type":"text","text":"Child"}],"origin":{"kind":"user"}}"#,
+                    r#"{"type":"llm.request","modelAlias":"child-model","turnStep":"0.1"}"#,
+                    r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}"#,
+                    r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Read_0","name":"Read","args":{"path":"README.md"}}}"#,
+                ],
+            )],
+        );
+
+        assert_eq!(parsed.main.subagents.len(), 1);
+        assert_eq!(
+            parsed.main.subagents[0].source_model.as_deref(),
+            Some("parent-model")
+        );
+        assert_eq!(
+            parsed.main.subagents[0].parser_ref.as_deref(),
+            Some("Agent_0")
+        );
+        assert!(parsed.main.tool_calls.is_empty());
+        assert_eq!(parsed.children.len(), 1);
+        assert_eq!(
+            parsed.children[0].tool_calls[0].parser_call_id.as_deref(),
+            Some("Read_0")
+        );
+        assert_eq!(
+            parsed.children[0].tool_calls[0].model.as_deref(),
+            Some("child-model")
+        );
+    }
+
+    #[test]
+    fn resumed_calls_keep_distinct_step_models() {
+        let parsed = parse_agents_bundle(
+            agents_state(json!({
+                "main": { "type": "main", "parentAgentId": null },
+                "agent-0": { "type": "sub", "parentAgentId": "main" },
+                "agent-1": { "type": "sub", "parentAgentId": "main" }
+            })),
+            &[
+                r#"{"type":"turn.prompt","time":1785320000000,"input":[{"type":"text","text":"Main"}],"origin":{"kind":"user"}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000010,"event":{"type":"tool.call","toolCallId":"Agent_15","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000020,"event":{"type":"tool.result","toolCallId":"Agent_15","result":{"output":"agent_id: agent-0\nstatus: completed\n\nFirst child finished."}}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-a","turnStep":"0.1"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-a","turnId":"0","step":1}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000030,"event":{"type":"tool.call","toolCallId":"Agent_16","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000040,"event":{"type":"tool.result","toolCallId":"Agent_16","result":{"output":"agent_id: agent-1\nstatus: failed\n\nsubagent error: The subagent stopped.","isError":true}}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-b","turnStep":"0.2"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-b","turnId":"0","step":2}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000050,"event":{"type":"tool.call","toolCallId":"Agent_18","name":"Agent","args":{"resume":"agent-1"}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000060,"event":{"type":"tool.result","toolCallId":"Agent_18","result":{"output":"agent_id: agent-1\nstatus: failed\n\nsubagent error: The subagent stopped.","isError":true}}}"#,
+                r#"{"type":"llm.request","modelAlias":"m-c","turnStep":"0.3"}"#,
+                r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-c","turnId":"0","step":3}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000070,"event":{"type":"tool.call","toolCallId":"Agent_20","name":"Agent","args":{}}}"#,
+                r#"{"type":"context.append_loop_event","time":1785320000080,"event":{"type":"tool.result","toolCallId":"Agent_20","result":{"output":"agent_id: agent-1\nstatus: completed\n\nResumed child finished."}}}"#,
+            ],
+            &[
+                ("agent-0", &[&child_prompt(1785320000025, "First child")]),
+                ("agent-1", &[&child_prompt(1785320000035, "Resumed child")]),
+            ],
+        );
+
+        assert_eq!(parsed.main.subagents.len(), 4);
+        let mut rows: Vec<_> = parsed
+            .main
+            .subagents
+            .iter()
+            .filter(|row| row.agent_id.as_deref() == Some("agent-1"))
+            .collect();
+        rows.sort_by_key(|row| row.parser_ref.as_deref());
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row.parser_ref.as_deref(), row.source_model.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                (Some("Agent_16"), Some("m-a")),
+                (Some("Agent_18"), Some("m-b")),
+                (Some("Agent_20"), Some("m-c")),
+            ]
+        );
+        assert!(
+            rows.iter()
+                .all(|row| row.child_session_id == rows[0].child_session_id)
+        );
+    }
+
+    #[test]
+    fn swarm_rows_share_call_model() {
+        let mut records = swarm_records(Some(
+            json!({"output":"<agent_swarm_result>\n<summary>completed: 2</summary>\n<subagent agent_id=\"agent-1\" item=\"B\" outcome=\"completed\">Body B</subagent>\n<subagent agent_id=\"agent-0\" item=\"A\" outcome=\"completed\">Body A</subagent>\n</agent_swarm_result>"}),
+        ));
+        records.splice(1..1, [
+            json!({"type":"llm.request", "modelAlias":"swarm-model", "turnStep":"0.1"}),
+            json!({"type":"context.append_loop_event", "event":{"type":"step.begin", "uuid":"step-1", "turnId":"0", "step":1}}),
+        ]);
+        let parsed = parse_swarm_records(swarm_state(), &records).main;
+        assert_eq!(parsed.subagents.len(), 2);
+        assert!(parsed.tool_calls.is_empty());
+        for row in &parsed.subagents {
+            assert_eq!(row.source_model.as_deref(), Some("swarm-model"));
+        }
+
+        records[4]["event"]["args"]["items"] = json!(["A", "missing"]);
+        let generic = parse_swarm_records(swarm_state(), &records).main;
+        assert!(generic.subagents.is_empty());
+        assert_eq!(generic.tool_calls.len(), 1);
+        assert_eq!(generic.tool_calls[0].tool_name, "AgentSwarm");
+        assert_eq!(generic.tool_calls[0].model.as_deref(), Some("swarm-model"));
+    }
+
+    #[test]
     fn models_follow_steps_and_usage_records_win_without_double_counting() {
         let root = write_bundle(
             state(),
@@ -1982,6 +2232,7 @@ struct AgentCallCandidate {
     raw_call_id: String,
     transcript_item_index: i64,
     call_time_ms: Option<i64>,
+    source_model: Option<String>,
     args: Option<Value>,
     result: Option<Value>,
     result_text: Option<String>,
@@ -2058,6 +2309,7 @@ struct JournalState {
     pending_calls: HashMap<String, usize>,
     call_start_times: HashMap<String, i64>,
     step_by_uuid: HashMap<String, StepState>,
+    open_step_uuid: Option<String>,
     step_uuid_by_turn_step: HashMap<String, String>,
     pending_models_by_turn_step: HashMap<String, VecDeque<String>>,
     unscoped_models: VecDeque<String>,
@@ -2814,7 +3066,7 @@ fn match_agent_calls(
             taken.insert(member.agent_id.clone());
             consumed_at.insert(member.agent_id.clone(), candidate.transcript_item_index);
             parent.subagents.push(Subagent {
-                source_model: None,
+                source_model: candidate.source_model.clone(),
                 id,
                 agent_id: Some(member.agent_id.clone()),
                 agent_name: child.profile_name.map(str::to_string).or_else(|| {
@@ -2937,7 +3189,7 @@ fn match_agent_calls(
             item.subagent_id = Some(subagent_id.clone());
         }
         parent.subagents.push(Subagent {
-            source_model: None,
+            source_model: candidate.source_model.clone(),
             id: subagent_id,
             agent_id: Some(agent_id.clone()),
             agent_name: child
@@ -3127,6 +3379,7 @@ fn parse_journal(
                     } else {
                         content
                     };
+                    state.open_step_uuid = None;
                     push_message(
                         &mut messages,
                         &mut transcript_items,
@@ -3156,6 +3409,7 @@ fn parse_journal(
                         true,
                     )
                 {
+                    state.open_step_uuid = None;
                     push_message(
                         &mut messages,
                         &mut transcript_items,
@@ -3192,6 +3446,7 @@ fn parse_journal(
                         state
                             .step_uuid_by_turn_step
                             .insert(turn_step.clone(), uuid.clone());
+                        state.open_step_uuid = Some(uuid.clone());
                         state.step_by_uuid.insert(
                             uuid,
                             StepState {
@@ -3201,6 +3456,11 @@ fn parse_journal(
                         );
                     }
                     Some("step.end") => {
+                        if let Some(uuid) = event.get("uuid").and_then(Value::as_str)
+                            && state.open_step_uuid.as_deref() == Some(uuid)
+                        {
+                            state.open_step_uuid = None;
+                        }
                         if let Some(usage) = parse_usage(event.get("usage")) {
                             state.step_usage.add(usage);
                         }
@@ -3214,6 +3474,7 @@ fn parse_journal(
                         if state.pending_calls.contains_key(&raw_id) {
                             continue;
                         }
+                        let model = tool_call_model(&state, event);
                         let tool_index = push_tool_call(
                             &mut tool_calls,
                             &mut transcript_items,
@@ -3224,6 +3485,7 @@ fn parse_journal(
                             &name,
                             event.get("args"),
                             wire_time.map(|(millis, _)| millis),
+                            model.clone(),
                         );
                         if matches!(name.as_str(), "Agent" | "AgentSwarm") {
                             state.agent_calls.push(AgentCallCandidate {
@@ -3238,6 +3500,7 @@ fn parse_journal(
                                     .expect("tool call added a transcript item")
                                     .item_index,
                                 call_time_ms: wire_time.map(|(millis, _)| millis),
+                                source_model: model,
                                 args: event.get("args").cloned(),
                                 result: None,
                                 result_text: None,
@@ -3374,6 +3637,16 @@ fn parse_journal(
     })
 }
 
+fn tool_call_model(state: &JournalState, event: &Value) -> Option<String> {
+    // An explicit identifier is authoritative, even when malformed or unknown.
+    // Only its absence permits attribution to the currently open step.
+    let uuid = match event.get("stepUuid") {
+        Some(value) => value.as_str()?,
+        None => state.open_step_uuid.as_deref()?,
+    };
+    state.step_by_uuid.get(uuid)?.model.clone()
+}
+
 fn is_real_turn_prompt(value: &Value, is_child: bool) -> bool {
     let Some(origin) = value.get("origin") else {
         return false;
@@ -3480,12 +3753,13 @@ fn push_tool_call(
     name: &str,
     args: Option<&Value>,
     time_ms: Option<i64>,
+    model: Option<String>,
 ) -> usize {
     let local_id = format!("kimi-tool::{session_id}::{raw_id}");
     let item_index = transcript_items.len() as i64;
     let tool_index = tool_calls.len();
     tool_calls.push(ToolCall {
-        model: None,
+        model,
         id: local_id.clone(),
         session_id: session_id.to_string(),
         subagent_id: None,
