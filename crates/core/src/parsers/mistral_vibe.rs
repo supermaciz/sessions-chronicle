@@ -240,7 +240,7 @@ impl MistralVibeParser {
 
                                 pending_subagent_calls.insert(raw_id, sa_idx);
                                 subagents.push(Subagent {
-                                    source_model: None,
+                                    source_model: session_model.clone(),
                                     id: subagent_id.clone(),
                                     agent_id: agent_name.clone(),
                                     agent_name: None,
@@ -275,7 +275,7 @@ impl MistralVibeParser {
 
                             pending_calls.insert(raw_id, tc_idx);
                             tool_calls.push(ToolCall {
-                                model: None,
+                                model: session_model.clone(),
                                 id: tc_id.clone(),
                                 session_id: session_id.clone(),
                                 subagent_id: None,
@@ -886,6 +886,32 @@ mod tests {
             parsed.transcript_items[1].kind,
             TranscriptItemKind::ToolCall
         );
+    }
+
+    #[test]
+    fn legacy_tool_calls_and_task_use_session_model() {
+        for (config, expected) in [
+            (
+                json!({"active_model":"mistral-medium"}),
+                Some("mistral-medium"),
+            ),
+            (json!({}), None),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let meta = json!({"session_id":"vibe-r1", "start_time":"2026-04-05T12:00:00Z", "end_time":"2026-04-05T12:00:10Z", "environment":{"working_directory":"/tmp/project"}, "config":config});
+            std::fs::write(dir.path().join("meta.json"), meta.to_string()).unwrap();
+            std::fs::write(dir.path().join("messages.jsonl"), concat!(
+                "{\"role\":\"user\",\"content\":\"Help\"}\n",
+                "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call-1\",\"function\":{\"name\":\"bash\",\"arguments\":\"{}\"}},{\"id\":\"call-2\",\"function\":{\"name\":\"task\",\"arguments\":\"{}\"}}]}\n",
+                "{\"role\":\"tool\",\"tool_call_id\":\"call-1\",\"content\":\"done\"}\n",
+                "{\"role\":\"tool\",\"tool_call_id\":\"call-2\",\"content\":\"done\"}\n"
+            )).unwrap();
+            let parsed = MistralVibeParser.parse(dir.path()).unwrap();
+            assert_eq!(parsed.tool_calls.len(), 1);
+            assert_eq!(parsed.subagents.len(), 1);
+            assert_eq!(parsed.tool_calls[0].model.as_deref(), expected);
+            assert_eq!(parsed.subagents[0].source_model.as_deref(), expected);
+        }
     }
 
     #[test]
