@@ -181,6 +181,7 @@ fn synthetic_child_prompt(payload: &Value) -> String {
 struct PendingSpawn {
     agent_type: Option<String>,
     message: Option<String>,
+    source_model: Option<String>,
 }
 
 /// Mutable parsing state accumulator for Codex sessions.
@@ -209,6 +210,7 @@ struct ParseState {
     // detailed `completed`/`errored` summary.
     subagent_summary_is_coarse: HashMap<String, bool>,
     pending_spawns: HashMap<String, PendingSpawn>,
+    seen_spawn_calls: HashSet<String>,
     pending_waits: HashSet<String>,
 
     // Counters
@@ -237,6 +239,7 @@ impl ParseState {
             subagent_priority_by_id: HashMap::new(),
             subagent_summary_is_coarse: HashMap::new(),
             pending_spawns: HashMap::new(),
+            seen_spawn_calls: HashSet::new(),
             pending_waits: HashSet::new(),
             msg_counter: 0,
             item_counter: 0,
@@ -294,7 +297,7 @@ impl ParseState {
         }
         let tc_idx = self.tool_calls.len();
         self.tool_calls.push(ToolCall {
-            model: None,
+            model: self.current_turn_model.clone(),
             id: call_id.clone(),
             session_id: self.session_id.clone(),
             subagent_id: None,
@@ -382,14 +385,18 @@ impl ParseState {
         agent_id: Option<String>,
         title: String,
         prompt: Option<String>,
+        source_model: Option<String>,
     ) {
-        if self.subagent_idx_by_call_id.contains_key(&id) {
+        if let Some(&index) = self.subagent_idx_by_call_id.get(&id) {
+            if self.subagents[index].source_model.is_none() {
+                self.subagents[index].source_model = source_model;
+            }
             return;
         }
 
         let subagent_idx = self.subagents.len();
         self.subagents.push(Subagent {
-            source_model: None,
+            source_model,
             id: id.clone(),
             agent_id: agent_id.clone(),
             agent_name: None,
@@ -450,7 +457,7 @@ impl ParseState {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
 
-        self.push_subagent_row(call_id.to_string(), agent_id, title, prompt);
+        self.push_subagent_row(call_id.to_string(), agent_id, title, prompt, None);
     }
 
     fn update_subagent_from_status(
@@ -602,7 +609,11 @@ impl ParseState {
         }
     }
 
-    fn pending_spawn_from_response_item(response_item: &Value, call_id: &str) -> PendingSpawn {
+    fn pending_spawn_from_response_item(
+        response_item: &Value,
+        call_id: &str,
+        source_model: Option<String>,
+    ) -> PendingSpawn {
         let Some(arguments) = Self::parse_response_item_json_string(
             response_item,
             "arguments",
@@ -612,10 +623,12 @@ impl ParseState {
             return PendingSpawn {
                 agent_type: None,
                 message: None,
+                source_model,
             };
         };
 
         PendingSpawn {
+            source_model,
             agent_type: arguments
                 .get("agent_type")
                 .and_then(|v| v.as_str())
@@ -695,7 +708,13 @@ impl ParseState {
             .or(pending.agent_type)
             .or(task_label)
             .unwrap_or_else(|| GENERIC_SUBAGENT_TITLE.to_string());
-        self.push_subagent_row(call_id.to_string(), agent_id, title, pending.message);
+        self.push_subagent_row(
+            call_id.to_string(),
+            agent_id,
+            title,
+            pending.message,
+            pending.source_model,
+        );
         if let Some(last) = self.subagents.last_mut() {
             last.agent_name = task_name;
         }
@@ -744,8 +763,18 @@ impl ParseState {
 
                 match tool_name.as_str() {
                     "spawn_agent" => {
-                        let pending =
-                            Self::pending_spawn_from_response_item(response_item, &call_id);
+                        // Only the first call record can enrich a lifecycle-only row.
+                        // A later duplicate must not borrow a different turn's model.
+                        let source_model = if self.seen_spawn_calls.insert(call_id.clone()) {
+                            self.current_turn_model.clone()
+                        } else {
+                            None
+                        };
+                        let pending = Self::pending_spawn_from_response_item(
+                            response_item,
+                            &call_id,
+                            source_model,
+                        );
                         let title = pending
                             .agent_type
                             .clone()
@@ -755,6 +784,7 @@ impl ParseState {
                             None,
                             title,
                             pending.message.clone(),
+                            pending.source_model.clone(),
                         );
                         self.pending_spawns.insert(call_id, pending);
                         return;
@@ -2625,6 +2655,97 @@ mod tests {
             "type": "response_item",
             "payload": {"type": "function_call_output", "call_id": call_id, "output": output},
         })
+    }
+
+    #[test]
+    fn tool_calls_keep_their_turn_model_across_late_results() {
+        let t = "2026-10-15T10:00:01Z";
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({})),
+            serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            legacy_user(t, "go"),
+            call_record(t, "shell", "call_a", "{}"),
+            serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5-mini"}}),
+            call_record(t, "shell", "call_b", "{}"),
+            serde_json::json!({"type":"event_msg","payload":{"type":"exec_command_begin","call_id":"exec_1"}}),
+            output_record(t, "call_a", "ok"),
+            output_record(t, "call_b", "ok"),
+        ]).unwrap();
+        for (id, model) in [("call_a", "gpt-5"), ("call_b", "gpt-5-mini")] {
+            let call = parsed.tool_calls.iter().find(|call| call.id == id).unwrap();
+            assert_eq!(call.model.as_deref(), Some(model));
+            assert_eq!(call.status, ToolCallStatus::Completed);
+        }
+        assert_eq!(
+            parsed
+                .tool_calls
+                .iter()
+                .find(|call| call.id == "exec_1")
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("gpt-5-mini")
+        );
+    }
+
+    #[test]
+    fn spawn_agent_keeps_parent_turn_model_not_child_model() {
+        let t = "2026-10-15T10:00:01Z";
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({})),
+            serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            legacy_user(t, "go"),
+            call_record(t, "spawn_agent", "spawn_1", r#"{"agent_type":"explorer","message":"go"}"#),
+            serde_json::json!({"type":"event_msg","payload":{"type":"collab_agent_spawn_end","call_id":"spawn_1","new_thread_id":"child-1","model":"gpt-5-codex-mini"}}),
+            serde_json::json!({"type":"turn_context","payload":{"model":"o3"}}),
+            output_record(t, "spawn_1", r#"{"agent_id":"child-1"}"#),
+            serde_json::json!({"type":"event_msg","payload":{"type":"collab_close_end","receiver_thread_id":"child-1","status":"shutdown"}}),
+        ]).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].source_model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn spawn_end_without_call_is_unattributed() {
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({})),
+            serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            legacy_user("2026-10-15T10:00:01Z", "go"),
+            serde_json::json!({"type":"event_msg","payload":{"type":"collab_agent_spawn_end","call_id":"orphan","model":"child"}}),
+        ]).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].source_model, None);
+    }
+
+    #[test]
+    fn spawn_end_before_call_takes_call_turn_model() {
+        let t = "2026-10-15T10:00:01Z";
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({})),
+            serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            legacy_user(t, "go"),
+            serde_json::json!({"type":"event_msg","payload":{"type":"collab_agent_spawn_end","call_id":"spawn_1"}}),
+            call_record(t, "spawn_agent", "spawn_1", "{}"),
+        ]).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].source_model.as_deref(), Some("gpt-5"));
+    }
+
+    #[test]
+    fn duplicate_spawn_call_does_not_borrow_later_turn_model() {
+        let t = "2026-10-15T10:00:01Z";
+        let parsed = parse_records(&[
+            session_meta(serde_json::json!({})),
+            legacy_user(t, "go"),
+            serde_json::json!({"type":"event_msg","payload":{"type":"collab_agent_spawn_end","call_id":"spawn_1"}}),
+            call_record(t, "spawn_agent", "spawn_1", "{}"),
+            output_record(t, "spawn_1", "{}"),
+            serde_json::json!({"type":"turn_context","payload":{"model":"gpt-5"}}),
+            call_record(t, "spawn_agent", "spawn_1", "{}"),
+            output_record(t, "spawn_1", "{}"),
+        ]).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].source_model, None);
     }
 
     fn reasoning_record(ts: &str, text: &str) -> Value {
