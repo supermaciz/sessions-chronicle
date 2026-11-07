@@ -1,6 +1,6 @@
 # Model storage for assistant transcript entries
 
-**Status:** Approved design; implementation not yet evidenced in the current codebase.  
+**Status:** Implemented (schema v23).  
 **Revision:** 2026-10-25 — rebased on the parser changes merged since the original
 draft: OpenCode V2 (#210), Mistral Vibe Unified (#211), and the Kimi Code
 subagent/swarm refresh (#213). Cache schema base is now v22.  

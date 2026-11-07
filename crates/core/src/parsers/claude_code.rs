@@ -488,19 +488,33 @@ impl ParseState {
         self.record_usage(event);
 
         if let Some(arr) = content_val.as_array() {
-            let (reasoning_text, has_encrypted_signature) =
-                ClaudeCodeParser::extract_reasoning_from_array(arr);
-            self.queue_reasoning(
-                &session_id,
-                reasoning_text,
-                has_encrypted_signature,
-                model.clone(),
-                timestamp,
-            );
+            let text = ClaudeCodeParser::extract_assistant_text_from_array(arr)
+                .filter(|text| !text.trim().is_empty());
+            let mut tool_use_ids = arr
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+                .filter_map(|block| block.get("id").and_then(Value::as_str))
+                .peekable();
+            let only_repeated_calls = text.is_none()
+                && tool_use_ids.peek().is_some()
+                && tool_use_ids.all(|id| {
+                    self.pending_calls.contains_key(id) || self.pending_subagents.contains_key(id)
+                });
+            // A duplicate-only event emits no item to consume its reasoning. Do not
+            // queue it, but preserve earlier pending reasoning and mixed-event content.
+            if !only_repeated_calls {
+                let (reasoning_text, has_encrypted_signature) =
+                    ClaudeCodeParser::extract_reasoning_from_array(arr);
+                self.queue_reasoning(
+                    &session_id,
+                    reasoning_text,
+                    has_encrypted_signature,
+                    model.clone(),
+                    timestamp,
+                );
+            }
 
-            if let Some(text) = ClaudeCodeParser::extract_assistant_text_from_array(arr)
-                && !text.trim().is_empty()
-            {
+            if let Some(text) = text {
                 self.push_message(
                     session_id.clone(),
                     Role::Assistant,
@@ -513,7 +527,13 @@ impl ParseState {
 
             // Extract and record tool_use blocks (regular tools and Task/Agent subagents)
             for block in arr {
-                self.record_tool_use(block, &session_id, timestamp, &parse_timestamp);
+                self.record_tool_use(
+                    block,
+                    &session_id,
+                    timestamp,
+                    model.as_deref(),
+                    &parse_timestamp,
+                );
             }
             return;
         }
@@ -611,6 +631,7 @@ impl ParseState {
         block: &Value,
         _session_id: &str,
         timestamp: DateTime<Utc>,
+        model: Option<&str>,
         _parse_timestamp: impl Fn(&str) -> Result<DateTime<Utc>>,
     ) {
         if block.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
@@ -624,6 +645,12 @@ impl ParseState {
                 return;
             }
         };
+        // Repeated blocks must not replace the original call or its attribution.
+        if self.pending_calls.contains_key(&tool_use_id)
+            || self.pending_subagents.contains_key(&tool_use_id)
+        {
+            return;
+        }
         let tool_name = block
             .get("name")
             .and_then(|v| v.as_str())
@@ -659,6 +686,7 @@ impl ParseState {
                     .collect::<String>()
             });
             self.subagents.push(Subagent {
+                source_model: model.map(str::to_string),
                 id: tool_use_id.clone(),
                 agent_id: None,
                 agent_name,
@@ -675,6 +703,7 @@ impl ParseState {
         } else {
             // Regular tool call
             self.tool_calls.push(ToolCall {
+                model: model.map(str::to_string),
                 id: tool_use_id.clone(),
                 session_id: String::new(),
                 subagent_id: None,
@@ -1029,6 +1058,275 @@ mod tests {
         }
         file.flush().unwrap();
         file
+    }
+
+    #[test]
+    fn tool_only_response_carries_event_model() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"claude-opus-4-1","content":[{"type":"tool_use","id":"toolu_a","name":"Read","input":{}},{"type":"tool_use","id":"toolu_b","name":"Grep","input":{}}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{"model":"claude-sonnet-4-5","content":"Later"}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"done"}]}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 2);
+        for call in &parsed.tool_calls {
+            assert_eq!(call.model.as_deref(), Some("claude-opus-4-1"));
+        }
+        assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+    }
+
+    #[test]
+    fn delegation_keeps_parent_model_not_requested_model() {
+        for name in ["Agent", "Task"] {
+            let event = format!(
+                r#"{{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{{"model":"claude-opus-4-1","content":[{{"type":"tool_use","id":"a","name":"{name}","input":{{"description":"d","prompt":"p","model":"haiku","name":"scout"}}}}]}}}}"#
+            );
+            let file = create_temp_session(&[
+                r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Hello"}}"#,
+                &event,
+            ]);
+            let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+            assert_eq!(parsed.subagents.len(), 1);
+            assert_eq!(
+                parsed.subagents[0].source_model.as_deref(),
+                Some("claude-opus-4-1")
+            );
+            assert_eq!(parsed.subagents[0].agent_name.as_deref(), Some("scout"));
+        }
+    }
+
+    #[test]
+    fn tool_use_with_synthetic_or_blank_model_is_unattributed() {
+        for model in [
+            r#""model":"<synthetic>","#,
+            r#""model":"   ","#,
+            r#""model":42,"#,
+            "",
+        ] {
+            let event = format!(
+                r#"{{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{{{model}"content":[{{"type":"tool_use","id":"a","name":"Read","input":{{}}}}]}}}}"#
+            );
+            let file = create_temp_session(&[
+                r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"Hello"}}"#,
+                &event,
+                r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{"model":"real","content":"Done"}}"#,
+            ]);
+            let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+            assert_eq!(parsed.tool_calls.len(), 1);
+            assert_eq!(parsed.tool_calls[0].model, None);
+        }
+    }
+
+    #[test]
+    fn duplicate_tool_use_keeps_first_attribution_through_storage_and_reindex() {
+        use crate::database::{
+            insert_subagent, insert_tool_call, load_subagent, load_tool_call, schema,
+        };
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","sessionId":"s","message":{"content":"Hello"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"opus","content":[{"type":"tool_use","id":"t","name":"Read","input":{}},{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{"model":"sonnet","content":[{"type":"tool_use","id":"t","name":"Read","input":{}},{"type":"tool_use","id":"a","name":"Agent","input":{}}]}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"done"},{"type":"tool_result","tool_use_id":"a","content":"agent done"}]}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        let db = NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        schema::initialize_database(&conn).unwrap();
+        for call in &parsed.tool_calls {
+            insert_tool_call(&conn, call, "s").unwrap();
+        }
+        for agent in &parsed.subagents {
+            insert_subagent(&conn, agent, "s").unwrap();
+        }
+        let call = load_tool_call(db.path(), "s", "t").unwrap().unwrap();
+        let agent = load_subagent(db.path(), "s", "a").unwrap().unwrap();
+        assert_eq!(call.model.as_deref(), Some("opus"));
+        assert_eq!(call.status, ToolCallStatus::Completed);
+        assert_eq!(agent.source_model.as_deref(), Some("opus"));
+        assert_eq!(agent.result_summary.as_deref(), Some("agent done"));
+
+        let mut call = call;
+        let mut agent = agent;
+        call.model = None;
+        agent.source_model = None;
+        insert_tool_call(&conn, &call, "s").unwrap();
+        insert_subagent(&conn, &agent, "s").unwrap();
+        assert_eq!(
+            load_tool_call(db.path(), "s", "t").unwrap().unwrap().model,
+            None
+        );
+        assert_eq!(
+            load_subagent(db.path(), "s", "a")
+                .unwrap()
+                .unwrap()
+                .source_model,
+            None
+        );
+    }
+
+    #[test]
+    fn duplicate_tool_use_reasoning_does_not_leak_to_next_user() {
+        assert_duplicate_reasoning_does_not_leak("Read");
+    }
+
+    #[test]
+    fn duplicate_agent_reasoning_does_not_leak_to_next_user() {
+        assert_duplicate_reasoning_does_not_leak("Agent");
+    }
+
+    #[test]
+    fn duplicate_task_reasoning_does_not_leak_to_next_user() {
+        assert_duplicate_reasoning_does_not_leak("Task");
+    }
+
+    fn assert_duplicate_reasoning_does_not_leak(name: &str) {
+        let event = format!(
+            r#"{{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{{"model":"opus","content":[{{"type":"thinking","thinking":"R","signature":"sig"}},{{"type":"tool_use","id":"t","name":"{name}","input":{{}}}}]}}}}"#
+        );
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"First"}}"#,
+            &event,
+            &event,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:02Z","message":{"content":"Next"}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:03Z","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"done"}]}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.messages.len(), 2, "{name}");
+        assert_eq!(parsed.messages[0].content, "First");
+        assert_eq!(parsed.messages[1].content, "Next");
+        assert_eq!(parsed.transcript_items.len(), 3, "{name}");
+        assert_eq!(parsed.transcript_items[0].message_index, Some(0));
+        assert_eq!(parsed.transcript_items[2].message_index, Some(1));
+        if name == "Read" {
+            assert_eq!(parsed.tool_calls.len(), 1);
+            assert!(parsed.subagents.is_empty());
+            assert_eq!(parsed.tool_calls[0].model.as_deref(), Some("opus"));
+            assert_eq!(parsed.tool_calls[0].status, ToolCallStatus::Completed);
+            assert_eq!(parsed.tool_calls[0].output_text.as_deref(), Some("done"));
+            assert_eq!(
+                parsed.transcript_items[1].tool_call_id.as_deref(),
+                Some("t")
+            );
+        } else {
+            assert!(parsed.tool_calls.is_empty());
+            assert_eq!(parsed.subagents.len(), 1);
+            assert_eq!(parsed.subagents[0].source_model.as_deref(), Some("opus"));
+            assert_eq!(parsed.subagents[0].result_summary.as_deref(), Some("done"));
+            assert_eq!(parsed.transcript_items[1].subagent_id.as_deref(), Some("t"));
+        }
+        assert_eq!(parsed.reasoning_attachments.len(), 1, "{name}");
+        let reasoning = &parsed.reasoning_attachments[0];
+        assert_eq!(reasoning.transcript_item_index, 1);
+        assert_eq!(reasoning.visible_text.as_deref(), Some("R"));
+        assert!(reasoning.has_encrypted_content);
+        assert_eq!(reasoning.source_model.as_deref(), Some("opus"));
+    }
+
+    #[test]
+    fn mixed_tool_use_event_keeps_reasoning_on_first_new_item() {
+        for (old_name, new_name) in [("Read", "Agent"), ("Agent", "Read"), ("Task", "Task")] {
+            for duplicate_first in [true, false] {
+                let first_event = format!(
+                    r#"{{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{{"model":"opus","content":[{{"type":"thinking","thinking":"R"}},{{"type":"tool_use","id":"t","name":"{old_name}","input":{{}}}}]}}}}"#
+                );
+                let duplicate =
+                    format!(r#"{{"type":"tool_use","id":"t","name":"{old_name}","input":{{}}}}"#);
+                let new =
+                    format!(r#"{{"type":"tool_use","id":"n","name":"{new_name}","input":{{}}}}"#);
+                let calls = if duplicate_first {
+                    format!("{duplicate},{new}")
+                } else {
+                    format!("{new},{duplicate}")
+                };
+                let mixed_event = format!(
+                    r#"{{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{{"model":"sonnet","content":[{{"type":"thinking","thinking":"fresh"}},{calls}]}}}}"#
+                );
+                let file = create_temp_session(&[
+                    r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"First"}}"#,
+                    &first_event,
+                    &first_event,
+                    &mixed_event,
+                    r#"{"type":"user","timestamp":"2024-01-01T00:00:03Z","message":{"content":"Next"}}"#,
+                    r#"{"type":"user","timestamp":"2024-01-01T00:00:04Z","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"old done"},{"type":"tool_result","tool_use_id":"n","content":"new done"}]}}"#,
+                ]);
+                let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+                assert_eq!(parsed.transcript_items.len(), 4);
+                assert_eq!(parsed.messages.len(), 2);
+                assert_eq!(parsed.messages[1].content, "Next");
+                assert_eq!(parsed.tool_calls.len() + parsed.subagents.len(), 2);
+                for call in &parsed.tool_calls {
+                    let (model, output) = if call.id == "t" {
+                        ("opus", "old done")
+                    } else {
+                        ("sonnet", "new done")
+                    };
+                    assert_eq!(call.model.as_deref(), Some(model));
+                    assert_eq!(call.status, ToolCallStatus::Completed);
+                    assert_eq!(call.output_text.as_deref(), Some(output));
+                }
+                for agent in &parsed.subagents {
+                    let (model, output) = if agent.id == "t" {
+                        ("opus", "old done")
+                    } else {
+                        ("sonnet", "new done")
+                    };
+                    assert_eq!(agent.source_model.as_deref(), Some(model));
+                    assert_eq!(agent.result_summary.as_deref(), Some(output));
+                }
+                assert_eq!(parsed.reasoning_attachments.len(), 2);
+                let reasoning = &parsed.reasoning_attachments[1];
+                assert_eq!(reasoning.transcript_item_index, 2);
+                assert_eq!(reasoning.source_model.as_deref(), Some("sonnet"));
+                assert_eq!(reasoning.visible_text.as_deref(), Some("fresh"));
+                let item = &parsed.transcript_items[2];
+                if new_name == "Read" {
+                    assert_eq!(item.kind, TranscriptItemKind::ToolCall);
+                    assert_eq!(item.tool_call_id.as_deref(), Some("n"));
+                } else {
+                    assert_eq!(item.kind, TranscriptItemKind::Subagent);
+                    assert_eq!(item.subagent_id.as_deref(), Some("n"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn duplicate_tool_use_preserves_previously_pending_reasoning() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"First"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"opus","content":[{"type":"thinking","thinking":"R"},{"type":"tool_use","id":"t","name":"Read","input":{}}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{"model":"sonnet","content":[{"type":"thinking","thinking":"pending"}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"opus","content":[{"type":"thinking","thinking":"R"},{"type":"tool_use","id":"t","name":"Read","input":{}}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:03Z","message":{"model":"sonnet","content":[{"type":"tool_use","id":"n","name":"Read","input":{}}]}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.transcript_items.len(), 3);
+        assert_eq!(parsed.reasoning_attachments.len(), 2);
+        let reasoning = &parsed.reasoning_attachments[1];
+        assert_eq!(reasoning.transcript_item_index, 2);
+        assert_eq!(reasoning.visible_text.as_deref(), Some("pending"));
+        assert_eq!(reasoning.source_model.as_deref(), Some("sonnet"));
+    }
+
+    #[test]
+    fn duplicate_tool_use_with_visible_text_keeps_event_reasoning() {
+        let file = create_temp_session(&[
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:00Z","message":{"content":"First"}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:01Z","message":{"model":"opus","content":[{"type":"tool_use","id":"t","name":"Read","input":{}}]}}"#,
+            r#"{"type":"assistant","timestamp":"2024-01-01T00:00:02Z","message":{"model":"sonnet","content":[{"type":"thinking","thinking":"fresh"},{"type":"tool_use","id":"t","name":"Read","input":{}},{"type":"text","text":"Answer"}]}}"#,
+            r#"{"type":"user","timestamp":"2024-01-01T00:00:03Z","message":{"content":"Next"}}"#,
+        ]);
+        let parsed = ClaudeCodeParser.parse(file.path()).unwrap();
+        assert_eq!(parsed.transcript_items.len(), 4);
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].model.as_deref(), Some("opus"));
+        assert_eq!(parsed.messages[1].content, "Answer");
+        assert_eq!(parsed.reasoning_attachments.len(), 1);
+        let reasoning = &parsed.reasoning_attachments[0];
+        assert_eq!(reasoning.transcript_item_index, 2);
+        assert_eq!(reasoning.visible_text.as_deref(), Some("fresh"));
+        assert_eq!(reasoning.source_model.as_deref(), Some("sonnet"));
     }
 
     #[test]

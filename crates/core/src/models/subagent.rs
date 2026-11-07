@@ -17,4 +17,19 @@ pub struct Subagent {
     /// Links to a child session when the subagent spawned its own session
     pub child_session_id: Option<String>,
     pub parser_ref: Option<String>,
+    /// Model of the requesting assistant, never the child's.
+    #[serde(default)]
+    pub source_model: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subagent_without_source_model_deserializes_as_unknown() {
+        let json = r#"{"id":"a","agent_id":null,"agent_name":null,"session_id":"s","title":"test","prompt":null,"result_summary":null,"child_session_id":null,"parser_ref":null}"#;
+        let subagent: Subagent = serde_json::from_str(json).unwrap();
+        assert_eq!(subagent.source_model, None);
+    }
 }

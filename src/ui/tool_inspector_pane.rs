@@ -1971,6 +1971,7 @@ mod tests {
 
     fn sample_tool_call(status: ToolCallStatus) -> ToolCall {
         ToolCall {
+            model: None,
             id: "tool-1".to_string(),
             session_id: "session-1".to_string(),
             subagent_id: None,
