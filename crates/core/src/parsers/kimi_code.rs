@@ -1234,6 +1234,29 @@ mod tests {
     }
 
     #[test]
+    fn malformed_step_begin_closes_previous_implicit_attribution() {
+        for malformed in [
+            r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-2","step":2}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-2","turnId":"0"}}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"step.begin","turnId":"0","step":2}}"#,
+        ] {
+            let parsed = parse_agents_bundle(
+                state(),
+                &[
+                    r#"{"type":"turn.prompt","input":[{"type":"text","text":"Inspect"}],"origin":{"kind":"user"}}"#,
+                    r#"{"type":"llm.request","modelAlias":"m-1","turnStep":"0.1"}"#,
+                    r#"{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-1","turnId":"0","step":1}}"#,
+                    malformed,
+                    r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"Bash_0","name":"Bash"}}"#,
+                ],
+                &[],
+            ).main;
+            assert_eq!(parsed.tool_calls.len(), 1);
+            assert_eq!(parsed.tool_calls[0].model, None, "{malformed}");
+        }
+    }
+
+    #[test]
     fn explicit_unknown_step_uuid_never_uses_open_step_model() {
         let parsed = parse_agents_bundle(
             state(),
@@ -3429,6 +3452,8 @@ fn parse_journal(
                 };
                 match event.get("type").and_then(Value::as_str) {
                     Some("step.begin") => {
+                        // A new, even malformed, step cannot belong to the previous step.
+                        state.open_step_uuid = None;
                         let (Some(uuid), Some(turn_id), Some(step)) = (
                             nonblank(event.get("uuid")),
                             event.get("turnId").and_then(Value::as_str),

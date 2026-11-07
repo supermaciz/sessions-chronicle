@@ -977,6 +977,22 @@ mod tests {
         initialize_database(&conn).unwrap();
         conn.execute_batch("DROP TABLE vibe_unified_signatures; PRAGMA user_version=20; INSERT INTO file_fingerprints(file_path, size, mtime_ns) VALUES ('preserved', 1, 2);").unwrap();
         conn.execute_batch("INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated, pinned_at) VALUES ('preserved', 'mistral_vibe', 1, 1, 'legacy/session', 2, 1234); INSERT INTO messages(session_id, message_index, role, content, timestamp) VALUES ('preserved', 0, 'user', 'preserved prompt', 1);").unwrap();
+        // Stop at the v23 clear so the preceding migrations' preservation is observable.
+        conn.execute_batch("CREATE TRIGGER guard_fingerprint BEFORE DELETE ON file_fingerprints BEGIN SELECT RAISE(ABORT, 'fingerprint clear'); END;").unwrap();
+        let error = initialize_database(&conn).unwrap_err();
+        assert!(error.to_string().contains("fingerprint clear"));
+        assert!(table_exists(&conn, "vibe_unified_signatures"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM file_fingerprints WHERE file_path = 'preserved'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        conn.execute_batch("DROP TRIGGER guard_fingerprint;")
+            .unwrap();
         initialize_database(&conn).unwrap();
         assert_eq!(CURRENT_DB_VERSION, 23);
         assert_eq!(
