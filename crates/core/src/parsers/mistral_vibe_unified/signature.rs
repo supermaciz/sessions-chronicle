@@ -23,9 +23,10 @@ use super::store::FileSample;
 /// snapshot and signature; no source store is modified.
 ///
 /// Version 2 invalidates signatures published before the journal-digest,
-/// state-union, and identity-validation fixes. Keep the maintenance policy in
+/// state-union, and identity-validation fixes. Version 3 backfills tool-call and
+/// subagent model attribution. Keep the maintenance policy in
 /// `docs/session-formats/mistral-vibe.md` aligned with this contract.
-pub const UNIFIED_READER_VERSION: u32 = 2;
+pub const UNIFIED_READER_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UnifiedSignature {
