@@ -29,8 +29,11 @@
 - `flatpak_app/` is generated build output; do not edit it directly.
 
 
-## Cloud Agent environment
-Ubuntu 24.04's GTK 4.14 and GLib 2.80 are older than the `gnome_50` and libadwaita 1.9 features this crate enables. On a Cloud Agent, `cargo`, `rustc`, `rustdoc`, `rustfmt`, `cargo-clippy`, `clippy-driver`, `meson`, and `ninja` run inside a Fedora 44 rootfs at `/opt/fedora` (GTK 4.22, GLib 2.88, libadwaita 1.9, GtkSourceView 5.20). The host commands `dbus-run-session` and `xvfb-run` stay on Ubuntu and pass `DISPLAY` through.
+## Remote Agent Environments
+Hosted coding-agent environments may provide a different toolchain than a local GNOME setup. Document each provider in its own subsection below.
+
+### Cursor Cloud Agent environment
+Ubuntu 24.04's GTK 4.14 and GLib 2.80 are older than the `gnome_50` and libadwaita 1.9 features this crate enables. On a Cursor Cloud Agent, `cargo`, `rustc`, `rustdoc`, `rustfmt`, `cargo-clippy`, `clippy-driver`, `meson`, and `ninja` run inside a Fedora 44 rootfs at `/opt/fedora` (GTK 4.22, GLib 2.88, libadwaita 1.9, GtkSourceView 5.20). The host commands `dbus-run-session` and `xvfb-run` stay on Ubuntu and pass `DISPLAY` through.
 
 Launch the installed binary with `fedora-exec` (`/usr/local/bin/fedora-exec`). A direct `~/.local/bin/sessions-chronicle` launch uses Ubuntu's dynamic linker and does not see the Fedora libraries:
 
