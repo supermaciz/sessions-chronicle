@@ -1,7 +1,7 @@
 use super::super::IndexingRuntimeState;
 use super::*;
 use crate::parsers::mistral_vibe_unified::store::test_support::{copy_tree, rewrite_document};
-use sha2::{Digest, Sha256};
+use crate::parsers::mistral_vibe_unified::canonical::sha256_hex;
 use std::fs;
 use std::io::Write;
 use tempfile::TempDir;
@@ -235,7 +235,7 @@ fn pool_child_projection(dir: &Path) {
     };
     let write = |path: &Path, value: &serde_json::Value| {
         let body = serde_json::to_vec(value).unwrap();
-        let digest = format!("{:x}", Sha256::digest(&body));
+        let digest = sha256_hex(&body);
         let mut stored = body;
         stored.push(b'\n');
         fs::write(path, stored).unwrap();
@@ -244,7 +244,7 @@ fn pool_child_projection(dir: &Path) {
     let mut projection = read(&generation.join("projection-state.json"));
     let entries = projection["snapshot"]["history"]["entries"].take();
     let chunk = serde_json::to_vec(&entries).unwrap();
-    let digest = format!("{:x}", Sha256::digest(&chunk));
+    let digest = sha256_hex(&chunk);
     fs::create_dir(dir.join("chunks")).unwrap();
     write(&dir.join("chunks").join(format!("{digest}.json")), &entries);
     projection["snapshot"]["history"]["entries"] = serde_json::json!([]);
