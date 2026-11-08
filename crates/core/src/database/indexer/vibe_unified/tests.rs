@@ -1,7 +1,7 @@
 use super::super::IndexingRuntimeState;
 use super::*;
-use crate::parsers::mistral_vibe_unified::store::test_support::{copy_tree, rewrite_document};
 use crate::parsers::mistral_vibe_unified::canonical::sha256_hex;
+use crate::parsers::mistral_vibe_unified::store::test_support::{copy_tree, rewrite_document};
 use std::fs;
 use std::io::Write;
 use tempfile::TempDir;
