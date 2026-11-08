@@ -50,6 +50,9 @@ pub struct ToolCall {
     pub duration_ms: Option<i64>,
     /// Tool-specific correlation id (Codex call_id, Mistral tool_calls[].id; NULL for Claude/OpenCode)
     pub parser_call_id: Option<String>,
+    /// Model of the generating assistant, never the child's.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Broad category for activity counting in session rows.
@@ -189,6 +192,13 @@ pub fn tool_name_icon(name: &str, icons: &ToolCategoryIcons) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_call_without_model_field_deserializes_as_unknown() {
+        let json = r#"{"id":"t","session_id":"s","subagent_id":null,"tool_name":"Read","status":"Completed","title":null,"summary":null,"input_json":null,"output_text":null,"error_text":null,"started_at":null,"ended_at":null,"duration_ms":null,"parser_call_id":null}"#;
+        let tc: ToolCall = serde_json::from_str(json).unwrap();
+        assert_eq!(tc.model, None);
+    }
 
     #[test]
     fn classify_edit_tools() {

@@ -41,6 +41,7 @@ impl<'a> EffectSink<'a> {
     pub(crate) fn push_effect(
         &mut self,
         entry: &Value,
+        model: Option<&str>,
         out: &mut Transcript,
     ) -> Result<(), UnifiedError> {
         let entry_id = entry
@@ -67,6 +68,7 @@ impl<'a> EffectSink<'a> {
         // child link is resolved by the indexer, never here.
         if kind == "subagent" {
             let subagent = Subagent {
+                source_model: model.map(str::to_string),
                 id: self.unique_row_id(&format!("{}-{entry_id}", self.session_id)),
                 agent_id: Some(
                     detail
@@ -126,6 +128,7 @@ impl<'a> EffectSink<'a> {
             };
         let id = self.unique_row_id(&format!("{}-{entry_id}", self.session_id));
         out.tool_calls.push(ToolCall {
+            model: model.map(str::to_string),
             id: id.clone(),
             session_id: self.session_id.to_string(),
             subagent_id: None,
@@ -174,6 +177,7 @@ impl<'a> EffectSink<'a> {
             self.session_id
         ));
         out.tool_calls.push(ToolCall {
+            model: None,
             id: id.clone(),
             session_id: self.session_id.to_string(),
             subagent_id: None,

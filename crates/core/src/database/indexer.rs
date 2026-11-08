@@ -2150,6 +2150,120 @@ mod tests {
     }
 
     #[test]
+    fn v23_migration_reparses_file_tracked_sessions_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let sessions_dir = temp.path().join("sessions");
+        std::fs::create_dir(&sessions_dir).unwrap();
+        std::fs::write(sessions_dir.join("model-session.jsonl"), concat!(
+            r#"{"type":"user","timestamp":"2026-11-07T10:00:00Z","sessionId":"model-session","message":{"content":"Run pwd"}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-11-07T10:00:01Z","sessionId":"model-session","message":{"model":"claude-opus-4-1","content":[{"type":"tool_use","id":"call-model","name":"Bash","input":{"command":"pwd"}}]}}"#,
+            "\n",
+        )).unwrap();
+        let db_path = temp.path().join("index.db");
+        let mut indexer = SessionIndexer::new(&db_path).unwrap();
+        let first = indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!((first.indexed, first.errors), (1, 0));
+        assert_eq!(
+            indexer
+                .db
+                .query_row("SELECT count(*) FROM file_fingerprints", [], |row| row
+                    .get::<_, i64>(0),)
+                .unwrap(),
+            1
+        );
+        drop(indexer);
+        let raw = Connection::open(&db_path).unwrap();
+        raw.execute_batch(
+            "UPDATE tool_calls SET model = NULL;
+             UPDATE sessions SET pinned_at = 55;
+             PRAGMA user_version = 22;",
+        )
+        .unwrap();
+        drop(raw);
+
+        let mut indexer = SessionIndexer::new(&db_path).unwrap();
+        let refreshed = indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!((refreshed.indexed, refreshed.errors), (1, 0));
+        let model: Option<String> = indexer.db.query_row(
+            "SELECT model FROM tool_calls WHERE session_id = 'model-session' AND id = 'call-model'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(model.as_deref(), Some("claude-opus-4-1"));
+        let pin: Option<i64> = indexer
+            .db
+            .query_row(
+                "SELECT pinned_at FROM sessions WHERE id = 'model-session'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pin, Some(55));
+        let settled = indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!(
+            (settled.indexed, settled.skipped, settled.errors),
+            (0, 1, 0)
+        );
+    }
+
+    #[test]
+    fn claude_child_linking_keeps_parent_source_model() {
+        let parent_id = "65ce34ec-2589-4f2a-aad3-f536cf8b2906";
+        let parent_rel = format!("{parent_id}.jsonl");
+        let child_rel = format!("{parent_id}/subagents/agent-a41c0fb07beb52ed6.jsonl");
+        let fixture = crate::fixture_path("claude_subagent_linkage");
+        let temp = tempfile::tempdir().unwrap();
+        let sessions_dir = temp.path().join("sessions");
+        for (rel, model) in [
+            (&parent_rel, "claude-opus-4-1"),
+            (&child_rel, "claude-haiku-4-5"),
+        ] {
+            let mut lines = String::new();
+            for line in std::fs::read_to_string(fixture.join(rel)).unwrap().lines() {
+                let mut event: serde_json::Value = serde_json::from_str(line).unwrap();
+                if event["type"] == "assistant" {
+                    event["message"]["model"] = model.into();
+                    if rel == &parent_rel {
+                        event["message"]["content"][0]["input"]["model"] = "haiku".into();
+                    }
+                }
+                lines.push_str(&event.to_string());
+                lines.push('\n');
+            }
+            let path = sessions_dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, lines).unwrap();
+        }
+
+        let db_path = temp.path().join("index.db");
+        let mut indexer = SessionIndexer::new(&db_path).unwrap();
+        let stats = indexer
+            .index_claude_sessions_incremental(&sessions_dir)
+            .unwrap();
+        assert_eq!((stats.indexed, stats.errors), (2, 0));
+        let agent = crate::database::load_subagent(&db_path, parent_id, "toolu_agent_001")
+            .unwrap()
+            .unwrap();
+        assert_eq!(agent.source_model.as_deref(), Some("claude-opus-4-1"));
+        let child_id = agent.child_session_id.expect("the child must be linked");
+        let child_model: Option<String> = indexer
+            .db
+            .query_row(
+                "SELECT model FROM messages WHERE session_id = ?1 AND role = 'assistant'",
+                [child_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(child_model.as_deref(), Some("claude-haiku-4-5"));
+    }
+
+    #[test]
     fn claude_incremental_skips_unchanged_files() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
@@ -3837,6 +3951,7 @@ mod tests {
 
         // 3 edits, 2 commands, 1 read — last call is Completed
         let make_tc = |id: &str, tool_name: &str, status: ToolCallStatus| ToolCall {
+            model: None,
             id: id.to_string(),
             session_id: "activity-test".to_string(),
             subagent_id: None,
@@ -3891,6 +4006,7 @@ mod tests {
 
         let mut parsed = parsed_session("abrupt-test", Some("/tmp/project"));
         parsed.tool_calls = vec![ToolCall {
+            model: None,
             id: "tc1".to_string(),
             session_id: "abrupt-test".to_string(),
             subagent_id: None,
