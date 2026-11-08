@@ -914,6 +914,75 @@ fn opencode_failed_promotion_retries_unchanged_and_preserves_lower_owner_pin() {
 }
 
 #[test]
+fn opencode_generation_six_cache_backfills_models_once() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let path = source_dir.path().join("model-reader.db");
+    let writer = create_v2_source(&path, &[("ses_m", "run a command")]);
+    let mut data: serde_json::Value = serde_json::from_str(&v2_tool_data("done")).unwrap();
+    data["model"] = serde_json::json!({"id": "test/model-a"});
+    data["content"][0]["id"] = "call_m".into();
+    writer.execute(
+        "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+         VALUES ('msg-m-asst', 'ses_m', 'assistant', 2, 1712000000000, 1712000000000, ?1)",
+        [data.to_string()],
+    ).unwrap();
+    drop(writer);
+
+    let (_dir, mut indexer) = new_indexer();
+    let json = source_dir.path().join("missing");
+    let first = indexer
+        .index_opencode_sessions_incremental(&json, std::slice::from_ref(&path))
+        .unwrap();
+    assert_eq!((first.indexed, first.errors), (1, 0));
+    indexer
+        .db
+        .execute_batch(
+            "UPDATE opencode_source_fingerprints SET reader_generation = 6;
+         UPDATE tool_calls SET model = NULL;
+         UPDATE sessions SET pinned_at = 123;
+         PRAGMA user_version = 22;",
+        )
+        .unwrap();
+    let fingerprint_count = || {
+        indexer
+            .db
+            .query_row(
+                "SELECT count(*) FROM opencode_source_fingerprints",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+    };
+    let before = fingerprint_count();
+    assert_eq!(before, 1);
+    crate::database::schema::initialize_database(&indexer.db).unwrap();
+    assert_eq!(fingerprint_count(), before);
+    assert_eq!(stored_fingerprint(&indexer.db, &path).unwrap().4, 6);
+
+    let refreshed = indexer
+        .index_opencode_sessions_incremental(&json, std::slice::from_ref(&path))
+        .unwrap();
+    assert_eq!((refreshed.indexed, refreshed.errors), (1, 0));
+    let model: Option<String> = indexer
+        .db
+        .query_row(
+            "SELECT model FROM tool_calls WHERE session_id = 'ses_m' AND id = 'call_m'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(model.as_deref(), Some("test/model-a"));
+    assert_eq!(pinned_at(&indexer.db, "ses_m"), Some(123));
+    let settled = indexer
+        .index_opencode_sessions_incremental(&json, &[path])
+        .unwrap();
+    assert_eq!(
+        (settled.indexed, settled.skipped, settled.errors),
+        (0, 1, 0)
+    );
+}
+
+#[test]
 fn opencode_generation_five_cache_refreshes_once_and_preserves_pin() {
     let source_dir = tempfile::tempdir().unwrap();
     let path = source_dir.path().join("old-reader.db");

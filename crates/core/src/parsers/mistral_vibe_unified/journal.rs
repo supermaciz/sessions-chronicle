@@ -19,7 +19,7 @@ use super::canonical::sha256_hex;
 use super::error::UnifiedError;
 use super::store::{LoadedStore, ProjectionState, reject_symlink};
 
-/// The 14 journal record kinds of `store_format` minor 9 (fact E).
+/// The 14 journal record kinds shared by store format minors 9 and 10 (fact E).
 const RECORD_KINDS: [&str; 14] = [
     "command_reserved",
     "core_input",

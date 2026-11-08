@@ -573,6 +573,39 @@ fn explicit_and_derived_children_are_linked() {
 }
 
 #[test]
+fn vibe_unified_child_linking_keeps_source_model() {
+    let mut h = Harness::fixtures();
+    assert!(h.run(true).1.is_empty());
+    let rows: Vec<(String, String, Option<String>)> = h
+        .indexer
+        .db
+        .prepare(
+            "SELECT parser_ref, child_session_id, source_model FROM subagents
+         WHERE session_id = ?1 AND child_session_id IS NOT NULL ORDER BY parser_ref",
+        )
+        .unwrap()
+        .query_map([R302], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "act-spawn-derived".into(),
+                CHILD_B.into(),
+                Some("mistral-large-4".into())
+            ),
+            (
+                "act-spawn-explicit".into(),
+                CHILD_A.into(),
+                Some("mistral-large-4".into())
+            ),
+        ]
+    );
+}
+
+#[test]
 fn child_indexed_before_parent_is_linked() {
     for child_first in [true, false] {
         let mut h = Harness::empty();
@@ -1158,6 +1191,63 @@ fn legacy_collision_with_existing_unified_keeps_prior_record() {
     assert!(errors[0].message.contains(h.dir(R302).to_str().unwrap()));
     assert_eq!(h.messages(R302), before);
     assert_eq!(h.signature(R302), signature);
+}
+
+#[test]
+fn old_reader_signature_backfills_effect_models_once() {
+    let mut h = Harness::fixtures();
+    assert!(h.run(true).1.is_empty());
+    h.indexer
+        .db
+        .execute(
+            "UPDATE tool_calls SET model = NULL WHERE session_id = ?1",
+            [R302],
+        )
+        .unwrap();
+    h.indexer
+        .db
+        .execute(
+            "UPDATE subagents SET source_model = NULL WHERE session_id = ?1",
+            [R302],
+        )
+        .unwrap();
+    let mut sig = h.indexer.unified_signature(&h.dir(R302)).unwrap().unwrap();
+    // Version 2 is the last reader that published caches without effect models.
+    sig.reader_version = 2;
+    h.indexer
+        .db
+        .execute(
+            "UPDATE vibe_unified_signatures SET signature = ?1 WHERE session_dir = ?2",
+            rusqlite::params![sig.to_storage(), h.dir(R302).to_string_lossy()],
+        )
+        .unwrap();
+
+    let (stats, errors) = h.run(true);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(stats.indexed, 1);
+    let model: Option<String> = h
+        .indexer
+        .db
+        .query_row(
+            "SELECT model FROM tool_calls WHERE session_id = ?1 AND parser_call_id = 'act-patch'",
+            [R302],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(model.as_deref(), Some("mistral-large-4"));
+    let models: Vec<Option<String>> = h
+        .indexer
+        .db
+        .prepare("SELECT source_model FROM subagents WHERE session_id = ?1 ORDER BY parser_ref")
+        .unwrap()
+        .query_map([R302], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(models, vec![Some("mistral-large-4".into()); 3]);
+    let (settled, errors) = h.run(true);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(settled.indexed, 0);
 }
 
 #[test]

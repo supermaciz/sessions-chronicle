@@ -164,10 +164,11 @@ impl V2Projection {
                         continue;
                     };
                     if matches!(name, "task" | "subagent") {
-                        let subagent = self.project_task_subagent(&row.id, item, position);
+                        let subagent =
+                            self.project_task_subagent(&row.id, item, position, model.as_deref());
                         self.push_task_subagent(subagent, row.seq);
                     } else {
-                        match project_tool(&self.metadata.id, item) {
+                        match project_tool(&self.metadata.id, item, model.as_deref()) {
                             Ok(tool_call) => self.push_tool_call(tool_call),
                             Err(err) => {
                                 tracing::warn!("malformed assistant tool in {}: {err:#}", row.id);
@@ -249,6 +250,7 @@ impl V2Projection {
         message_id: &str,
         content: &Value,
         position: usize,
+        model: Option<&str>,
     ) -> Subagent {
         let id = content
             .get("id")
@@ -288,6 +290,7 @@ impl V2Projection {
             });
 
         Subagent {
+            source_model: model.map(str::to_string),
             id,
             agent_id: None,
             agent_name: input
@@ -399,6 +402,7 @@ impl V2Projection {
         // No matching task (or an ambiguous tie): retain a stable standalone
         // subagent row keyed by the native message id.
         let subagent = Subagent {
+            source_model: None,
             id: row.id.clone(),
             agent_id: None,
             agent_name: None,
@@ -589,7 +593,7 @@ impl V2Projection {
 /// joins supported text blocks in order, skipping file bodies. Execution
 /// duration uses valid `ran`/`completed` content times; missing or reversed
 /// ranges stay unknown.
-fn project_tool(session_id: &str, content: &Value) -> Result<ToolCall> {
+fn project_tool(session_id: &str, content: &Value, model: Option<&str>) -> Result<ToolCall> {
     let id = content
         .get("id")
         .and_then(|v| v.as_str())
@@ -638,6 +642,7 @@ fn project_tool(session_id: &str, content: &Value) -> Result<ToolCall> {
     };
 
     Ok(ToolCall {
+        model: model.map(str::to_string),
         id,
         session_id: session_id.to_string(),
         subagent_id: None,

@@ -444,8 +444,76 @@ fn v2_snapshot_is_consistent() {
 }
 
 #[test]
+fn v2_tools_and_tasks_inherit_their_assistant_row_model() {
+    use serde_json::json;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("models.db");
+    let conn = test_support::create_v2_db(&path);
+    conn.execute_batch("DELETE FROM session_message; DELETE FROM session_v2;")
+        .unwrap();
+    conn.execute("INSERT INTO session_v2 (id, project_id, directory, title, parent_id, version, slug, model, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, time_created, time_updated)
+        VALUES ('ses_models', 'prj', '/tmp/proj', NULL, NULL, '0.0.0', 'models', NULL, 0, 0, 0, 0, 0, 1712000000000, 1712000000000)", []).unwrap();
+    let rows = [
+        ("user", "user", 1, json!({"text":"prompt"})),
+        (
+            "assistant-a",
+            "assistant",
+            2,
+            json!({"model":{"id":"test/model-a"}, "content":[
+                {"type":"tool", "id":"call_a", "name":"bash", "state":{"status":"completed"}},
+                {"type":"tool", "id":"task_a", "name":"task", "state":{"metadata":{"sessionId":"ses_child_a"}}}
+            ]}),
+        ),
+        (
+            "assistant-b",
+            "assistant",
+            3,
+            json!({"model":{"id":"test/model-b"}, "content":[
+                {"type":"tool", "id":"call_b", "name":"bash", "state":{"status":"completed"}}
+            ]}),
+        ),
+        (
+            "completion",
+            "synthetic",
+            4,
+            json!({"metadata":{"source":"subagent", "childID":"ses_child_a"}, "text":"completed task"}),
+        ),
+        (
+            "orphan",
+            "synthetic",
+            5,
+            json!({"metadata":{"source":"subagent", "childID":"ses_child_orphan"}, "text":"orphan result"}),
+        ),
+    ];
+    for (id, kind, seq, data) in rows {
+        conn.execute("INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) VALUES (?1, 'ses_models', ?2, ?3, 1712000000000, 1712000000000, ?4)", rusqlite::params![id, kind, seq, data.to_string()]).unwrap();
+    }
+    drop(conn);
+    let parsed = V2Reader::open(&path)
+        .unwrap()
+        .parse_session("ses_models")
+        .unwrap();
+    assert_eq!(
+        find_tool(&parsed, "call_a").model.as_deref(),
+        Some("test/model-a")
+    );
+    assert_eq!(
+        find_tool(&parsed, "call_b").model.as_deref(),
+        Some("test/model-b")
+    );
+    assert_eq!(parsed.subagents.len(), 2);
+    let task = parsed.subagents.iter().find(|s| s.id == "task_a").unwrap();
+    assert_eq!(task.source_model.as_deref(), Some("test/model-a"));
+    assert_eq!(task.result_summary.as_deref(), Some("completed task"));
+    let orphan = parsed.subagents.iter().find(|s| s.id == "orphan").unwrap();
+    assert_eq!(orphan.source_model, None);
+}
+
+#[test]
 fn v2_tool_lifecycle() {
     let parsed = parse_session("ses_v2_tools");
+    assert!(parsed.tool_calls.iter().all(|tc| tc.model.is_none()));
 
     let streaming = find_tool(&parsed, "call_stream");
     assert_eq!(streaming.status, ToolCallStatus::Pending);

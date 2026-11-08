@@ -282,7 +282,7 @@ pub(crate) fn convert(
                 piece.source_timestamp = Some(entry_timestamp(entry, start_time));
                 transcript.add_reasoning(turn_id, piece);
             }
-            "effect" => effects.push_effect(entry, &mut transcript)?,
+            "effect" => effects.push_effect(entry, current_model.as_deref(), &mut transcript)?,
             "checkpoint" => {
                 let kind = entry.get("kind").and_then(Value::as_str).ok_or_else(|| {
                     UnifiedError::Corrupt("checkpoint kind is missing".to_string())
@@ -1002,10 +1002,126 @@ mod tests {
             .unwrap_or_else(|| panic!("transcript item of tool call {action_id}"))
     }
 
-    /// The deferred Task 5 assertions, now over the real effect sink:
-    /// reasoning attaches through `Transcript::push_item` to the first
-    /// same-turn effect item — e2 on `act-read`, e7 on `act-patch` and
-    /// e20b on `act-write`.
+    fn model_effect(id: &str, subagent: bool) -> Value {
+        let detail = if subagent {
+            json!({"kind":"subagent", "agentName":"scout", "input":{"task":"inspect"}})
+        } else {
+            json!({"kind":"tool", "toolName":"bash", "input":{"command":"ls"}})
+        };
+        json!({"type":"effect", "id":format!("effect-{id}"), "turnId":"t1", "createdAt":T0_MS, "updatedAt":T0_MS, "generationStatus":"completed", "detail":detail, "state":{"status":"completed"}})
+    }
+
+    fn model_checkpoint(id: &str, model: &str) -> Value {
+        json!({"type":"checkpoint", "id":id, "turnId":"t1", "createdAt":T0_MS, "updatedAt":T0_MS, "generationStatus":"completed", "kind":"model_change", "details":{"model":model}})
+    }
+
+    #[test]
+    fn effects_follow_model_change_checkpoints() {
+        let parsed = convert_entries(vec![
+            user_message("u1", json!([{"type":"text", "text":"Hi"}])),
+            model_effect("e0", false),
+            model_checkpoint("c1", "m-one"),
+            model_effect("e1", false),
+            model_effect("s1", true),
+            model_checkpoint("c2", "m-two"),
+            model_effect("e2", false),
+        ])
+        .unwrap();
+        assert_eq!(
+            parsed
+                .tool_calls
+                .iter()
+                .map(|c| c.model.as_deref())
+                .collect::<Vec<_>>(),
+            vec![None, Some("m-one"), Some("m-two")]
+        );
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].source_model.as_deref(), Some("m-one"));
+    }
+
+    #[test]
+    fn effects_without_checkpoints_use_session_model() {
+        let parsed = convert_entries(vec![
+            user_message("u1", json!([{"type":"text", "text":"Hi"}])),
+            model_effect("e1", false),
+            model_effect("s1", true),
+        ])
+        .unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.tool_calls[0].model.as_deref(),
+            Some("mistral-large-4")
+        );
+        assert_eq!(
+            parsed.subagents[0].source_model.as_deref(),
+            Some("mistral-large-4")
+        );
+    }
+
+    #[test]
+    fn user_skill_calls_stay_unattributed() {
+        let entry = user_message(
+            "u1",
+            json!([
+                {"type":"text", "text":"Do the thing"},
+                {"type":"text", "text":"<skill_content name=\"vibe-skill\">\nSkill body\n</skill_content>"},
+                {"type":"text", "text":"Skill 'other-skill' is already loaded earlier in this conversation. Reuse those instructions."},
+                {"type":"image", "attachment":{"mimeType":"image/png", "path":"/home/fixture/screenshot.png"}}
+            ]),
+        );
+        let parsed = convert_entries(vec![entry, model_effect("e1", false)]).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 3);
+        assert_eq!(
+            parsed
+                .tool_calls
+                .iter()
+                .map(|c| (c.tool_name.as_str(), c.model.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("skill", None),
+                ("skill", None),
+                ("bash", Some("mistral-large-4"))
+            ]
+        );
+    }
+
+    #[test]
+    fn r302_effect_models() {
+        let parsed = parse_fixture(&unified_rel(R302)).unwrap().parsed;
+        // act-read precedes the checkpoint; patch, write and all spawns follow it.
+        for (id, model) in [
+            ("act-read", None),
+            ("act-patch", Some("mistral-large-4")),
+            ("act-write", Some("mistral-large-4")),
+        ] {
+            let call = parsed
+                .tool_calls
+                .iter()
+                .find(|c| c.parser_call_id.as_deref() == Some(id))
+                .unwrap();
+            assert_eq!(call.model.as_deref(), model, "{id}");
+        }
+        for id in [
+            "act-spawn-explicit",
+            "act-spawn-derived",
+            "act-spawn-missing",
+        ] {
+            let agent = parsed
+                .subagents
+                .iter()
+                .find(|s| s.parser_ref.as_deref() == Some(id))
+                .unwrap();
+            assert_eq!(
+                agent.source_model.as_deref(),
+                Some("mistral-large-4"),
+                "{id}"
+            );
+        }
+    }
+
+    /// Reasoning attaches to the first same-turn effect item — e2 on
+    /// `act-read`, e7 on `act-patch` and e20b on `act-write`.
     #[test]
     fn r302_reasoning_attachments() {
         let parsed = parse_fixture(&unified_rel(R302)).unwrap().parsed;

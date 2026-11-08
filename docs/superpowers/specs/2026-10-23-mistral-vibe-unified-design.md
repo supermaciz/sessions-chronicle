@@ -18,7 +18,7 @@ The following policies define the intended behavior. The implementation status a
 
 ### Delivered implementation and validation
 
-The native Rust reader, journal replay, domain conversion, saved-result resolution, incremental indexer integration, schema v21, child linkage and resume eligibility are implemented in PR #211. Legacy Vibe sessions remain supported alongside Unified stores. The implementation accepts store minor 9 only; it does not add a Python runtime dependency or execute Vibe to read sessions.
+The native Rust reader, journal replay, domain conversion, saved-result resolution, incremental indexer integration, schema v21, child linkage and resume eligibility are implemented in PR #211. Legacy Vibe sessions remain supported alongside Unified stores. The implementation accepts store minors 9 and 10 (#220). Minor 10 (Vibe ≥ 3.0.3) only omits configuration baselines a generation already records from its first `core_input`; conversion reads `runtime.active_model` and the projection, not those fields. It does not add a Python runtime dependency or execute Vibe to read sessions.
 
 The implementation is under review, not merged or declared fully release-validated. On code baseline `9bf2b16`, the recorded verification is:
 

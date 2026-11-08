@@ -32,7 +32,8 @@ use super::{IndexingStats, SessionIndexer, push_indexing_error};
 /// every OpenCode SQLite source, because a stored fingerprint whose generation
 /// does not match this value is treated as stale. Generation 6 uses a common
 /// V1/V2 snapshot and explicit per-representation retry state.
-const OPENCODE_READER_GENERATION: i64 = 6;
+/// Generation 7 backfills tool-call and subagent model attribution.
+const OPENCODE_READER_GENERATION: i64 = 7;
 
 /// Outcome of processing one selected session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

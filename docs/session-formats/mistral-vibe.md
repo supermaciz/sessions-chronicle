@@ -22,9 +22,18 @@ or `session_logging.save_dir` in `config.toml`), so unified sessions live under
 the legacy format that the rest of this document describes.
 
 Upstream store identity: `mistral.vibe.unified-session-store/v1` with a
-`store_format_minor` revision counter. **Sessions Chronicle accepts minor 9
-only**; its fixture-backed range is stores written by Vibe 3.0.0, 3.0.1 and
-3.0.2 (all minor 9). Other minor versions are rejected, including lower ones.
+`store_format_minor` revision counter. Sessions Chronicle accepts minors
+**9 and 10** and rejects every other minor. Minor 9 is Vibe 3.0.0–3.0.2.
+Minor 10 is what Vibe ≥ 3.0.3 writes
+([v3.0.3](https://github.com/mistralai/mistral-vibe/releases/tag/v3.0.3),
+2026-10-26; PyPI 3.0.4). That bump only omits configuration baselines from
+a generation's first `core_input` when the generation already records them
+(`checkpoint_capabilities`, `checkpoint_settings`, `checkpoint_plugins`,
+`checkpoint_system_instructions`). Conversion reads
+`runtime.session_metadata.active_model` and the public projection, not
+those fields, so the same reader handles both minors. Minor 8 and minor
+11+ stay `UnifiedError::Unsupported`. Legacy `session_*` directories are
+unaffected.
 
 ---
 
@@ -33,9 +42,16 @@ only**; its fixture-backed range is stores written by Vibe 3.0.0, 3.0.1 and
 Confirmed from upstream source (`harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py`,
 `_session_catalog.py`, `_subagents/_operations.py`) at commit `63d0e8f`
 (v3.0.2) and from local v3.0.2 samples under `~/.vibe/logs/session/unified/`.
-Rechecked by the 2026-10-25/26 format-watch passes: `main` is still `63d0e8f`,
-PyPI `mistral-vibe` is still 3.0.2, and `STORE_FORMAT_MINOR` is still 9 — the
-minor accepted by `crates/core/src/parsers/mistral_vibe_unified/store.rs`.
+**Format watch 2026-11-02:** `main` / tag
+[v3.0.4](https://github.com/mistralai/mistral-vibe/releases/tag/v3.0.4)
+(`338ad4bf`), PyPI `mistral-vibe` 3.0.4, and
+[`STORE_FORMAT_MINOR = 10`](https://github.com/mistralai/mistral-vibe/blob/v3.0.3/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py)
+since v3.0.3 (comment: a generation's first Core input omits each configuration
+baseline the generation already records). Upstream readers accept lower minors
+and reject higher ones. Sessions Chronicle accepts the exact set {9, 10} in
+`crates/core/src/parsers/mistral_vibe_unified/store.rs` and rejects 8 and 11+.
+The minor-10 regression store is
+`tests/fixtures/vibe_unified_variants/minor-10/`.
 
 ### Storage & File Naming
 
@@ -90,7 +106,9 @@ A sibling `.session-index.json` catalog (maintained by
 }
 ```
 
-Upstream type: `CurrentPointerV1` in `_storage.py`.
+`store_format_minor` is `9` on Vibe 3.0.0–3.0.2 stores and `10` on Vibe ≥
+3.0.3 stores. Both values are accepted. Upstream type: `CurrentPointerV1`
+in `_storage.py`.
 
 ### `meta.json` Format (Unified)
 
@@ -265,7 +283,7 @@ Keep these version domains separate:
 
 | Version | Purpose |
 |---|---|
-| Vibe `store_format` / `store_format_minor` (currently minor 9 only) | Which upstream on-disk format the reader accepts. |
+| Vibe `store_format` / `store_format_minor` (reader accepts 9 and 10; 8 and 11+ rejected) | Which upstream on-disk format the reader accepts. |
 | `UNIFIED_READER_VERSION` (currently 2) | Whether a prior successful Unified read may still be skipped. |
 | SQLite schema version | Structure of Sessions Chronicle's index database; changing reader semantics alone does not require a schema migration. |
 
@@ -724,7 +742,8 @@ do not load entire JSONL into memory.
 - [Mistral Vibe builtin agent profiles (`BuiltinAgentName`, `AgentProfile`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/agents/models.py)
 - [Mistral Vibe session loader (filename constants `METADATA_FILENAME` = `meta.json`, `MESSAGES_FILENAME` = `messages.jsonl`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/session/session_loader.py)
 - [Mistral Vibe message/session models (`SessionMetadata`, `LLMMessage`, `AgentStats`)](https://github.com/mistralai/mistral-vibe/blob/main/vibe/core/types.py)
-- [Mistral Vibe CHANGELOG (verified through 3.0.2, 2026-10-22)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
+- [Mistral Vibe CHANGELOG (verified through 3.0.4, 2026-11-02)](https://github.com/mistralai/mistral-vibe/blob/main/CHANGELOG.md)
+- [Vibe v3.0.3 `STORE_FORMAT_MINOR = 10`](https://github.com/mistralai/mistral-vibe/blob/v3.0.3/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py)
 - [Mistral Vibe unified session store (`STORE_FORMAT`, `CurrentPointerV1`, `GenerationManifestV1`, `RuntimeStateV3`, interop history)](https://github.com/mistralai/mistral-vibe/blob/main/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py)
 - [Mistral Vibe unified session catalog (`.session-index.json`, journal path pattern)](https://github.com/mistralai/mistral-vibe/blob/main/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_session_catalog.py)
 - [Mistral Vibe Configuration Docs](https://docs.mistral.ai/mistral-vibe/introduction/configuration)

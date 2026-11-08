@@ -365,6 +365,11 @@ impl OpenCodeParser {
         has_user_message: &mut bool,
         has_task_tool_in_session: bool,
     ) -> PartOutcome {
+        let assistant_model = if message_role == Some(Role::User) {
+            None
+        } else {
+            message_model
+        };
         match part.kind.as_str() {
             "text" => {
                 let role = match message_role {
@@ -447,6 +452,7 @@ impl OpenCodeParser {
                     let result_summary = output_text.or(error_text);
 
                     return PartOutcome::Subagent(Subagent {
+                        source_model: assistant_model.map(str::to_string),
                         id: format!("{}-{}-{}", session_id, message_id, part.id),
                         agent_id: None,
                         agent_name: None,
@@ -478,6 +484,7 @@ impl OpenCodeParser {
                     .map(str::to_string);
 
                 PartOutcome::ToolCall(ToolCall {
+                    model: assistant_model.map(str::to_string),
                     id: format!("{}-{}-{}", session_id, message_id, part.id),
                     session_id: session_id.to_string(),
                     subagent_id: None,
@@ -520,6 +527,7 @@ impl OpenCodeParser {
                     .map(str::to_string);
 
                 PartOutcome::Subagent(Subagent {
+                    source_model: assistant_model.map(str::to_string),
                     id: format!("{}-{}-{}", session_id, message_id, part.id),
                     agent_id: None,
                     agent_name: None,
@@ -1021,6 +1029,142 @@ mod tests {
         assert_eq!(parsed.messages.len(), 1);
         assert_eq!(parsed.messages[0].role, Role::User);
         assert_eq!(parsed.messages[0].content, "Hello");
+    }
+
+    #[test]
+    fn opencode_tool_and_task_parts_inherit_message_model() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let session = write_session_file(
+            root,
+            "project",
+            "models.json",
+            json!({
+                "id": "models", "directory": "/tmp/proj",
+                "time": {"created": 1712000000000i64, "updated": 1712000000003i64}
+            }),
+        );
+        for (id, role, model, time) in [
+            ("user", "user", None, 1712000000000i64),
+            ("a", "assistant", Some("anthropic/claude-x"), 1712000000001),
+            ("b", "assistant", Some("openai/gpt-y"), 1712000000002),
+        ] {
+            write_message_file(
+                root,
+                "models",
+                &format!("{id}.json"),
+                json!({
+                    "id": id, "sessionID": "models", "role": role, "modelID": model,
+                    "time": {"created": time}
+                }),
+            );
+        }
+        for (msg, id, part) in [
+            (
+                "user",
+                "text",
+                json!({"id":"text", "type":"text", "text":"hello"}),
+            ),
+            (
+                "a",
+                "bash-a",
+                json!({"id":"bash-a", "type":"tool", "tool":"bash"}),
+            ),
+            (
+                "a",
+                "task-a",
+                json!({"id":"task-a", "type":"tool", "tool":"task"}),
+            ),
+            (
+                "b",
+                "bash-b",
+                json!({"id":"bash-b", "type":"tool", "tool":"bash"}),
+            ),
+        ] {
+            write_part_file(root, msg, &format!("{id}.json"), part);
+        }
+        let parsed = OpenCodeParser::new(root).parse(&session).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert_eq!(
+            parsed.tool_calls[0].model.as_deref(),
+            Some("anthropic/claude-x")
+        );
+        assert_eq!(parsed.tool_calls[1].model.as_deref(), Some("openai/gpt-y"));
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].source_model.as_deref(),
+            Some("anthropic/claude-x")
+        );
+    }
+
+    #[test]
+    fn opencode_user_message_subtask_has_no_source_model() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+        let session = write_session_file(
+            root,
+            "project",
+            "user.json",
+            json!({
+                "id": "user-session", "time": {"created": 1712000000000i64, "updated": 1712000000000i64}
+            }),
+        );
+        write_message_file(
+            root,
+            "user-session",
+            "user.json",
+            json!({
+                "id":"user", "sessionID":"user-session", "role":"user", "modelID":"test/user-model",
+                "time":{"created":1712000000000i64}
+            }),
+        );
+        write_part_file(
+            root,
+            "user",
+            "text.json",
+            json!({"id":"text", "type":"text", "text":"hello"}),
+        );
+        write_part_file(
+            root,
+            "user",
+            "subtask.json",
+            json!({"id":"subtask", "type":"subtask", "description":"delegate"}),
+        );
+        let parsed = OpenCodeParser::new(root).parse(&session).unwrap();
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(parsed.subagents[0].source_model, None);
+    }
+
+    #[test]
+    fn opencode_sqlite_tool_and_task_inherit_message_model() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("opencode.db");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, parent_id TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
+            CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, data TEXT NOT NULL);
+            INSERT INTO session VALUES ('ses', '/tmp/proj', NULL, NULL, 1712000000000, 1712000000001);
+            INSERT INTO message VALUES ('user', 'ses', 1712000000000, '{\"role\":\"user\"}');
+            INSERT INTO message VALUES ('assistant', 'ses', 1712000000001, '{\"role\":\"assistant\",\"modelID\":\"test/sqlite-model\"}');
+            INSERT INTO part VALUES ('text', 'user', '{\"type\":\"text\",\"text\":\"hello\"}');
+            INSERT INTO part VALUES ('tool', 'assistant', '{\"type\":\"tool\",\"tool\":\"bash\"}');
+            INSERT INTO part VALUES ('task', 'assistant', '{\"type\":\"tool\",\"tool\":\"task\"}');").unwrap();
+        drop(conn);
+        let backend = super::sqlite_backend::SqliteBackend::open(&path).unwrap();
+        let entry = backend.list_sessions().unwrap().into_iter().next().unwrap();
+        let parsed = OpenCodeParser::new(dir.path())
+            .parse_entry(&entry, &backend)
+            .unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(
+            parsed.tool_calls[0].model.as_deref(),
+            Some("test/sqlite-model")
+        );
+        assert_eq!(parsed.subagents.len(), 1);
+        assert_eq!(
+            parsed.subagents[0].source_model.as_deref(),
+            Some("test/sqlite-model")
+        );
     }
 
     #[test]
