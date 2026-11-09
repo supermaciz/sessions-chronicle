@@ -654,17 +654,16 @@ mod tests {
     }
 
     #[test]
-    fn child_with_mismatched_spawn_key_is_identity_conflict() {
+    fn child_with_valid_identity_and_non_deriving_spawn_key_is_accepted() {
         let child_b = child_session_id(R302, "act-spawn-derived");
         let (temp, session) = copy_unified(&child_b);
         rewrite_document(&session, "runtime-state.json", |document| {
             document["session_metadata"]["subagent_spawn_key"] = json!("act-other");
         });
 
-        let error = MistralVibeUnifiedParser
+        MistralVibeUnifiedParser
             .parse(&session)
-            .expect_err("the spawn key no longer derives the child id");
-        assert_eq!(error_variant(&error), "IdentityConflict");
+            .expect("the child ID can include Vibe's admission sequence");
         let _ = temp;
     }
 

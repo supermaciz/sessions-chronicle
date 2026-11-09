@@ -30,9 +30,8 @@ const ACCEPTED_STORE_FORMAT_MINORS: [u64; 2] = [9, 10];
 /// Pinned snapshot format of the public session state.
 const PROJECTION_FORMAT: &str = "harness.public-session-state/v1";
 
-/// Pinned fact J: a child session ID is derived from the parent session
-/// ID and the spawn action ID, so a child links back to its spawn effect
-/// without any stored mapping.
+/// Pre-3.1.0 child session ID derivation, retained as a fallback for older
+/// effects that do not include an explicit child session ID.
 pub fn child_session_id(parent_session_id: &str, action_id: &str) -> String {
     let mut identity = Vec::with_capacity(parent_session_id.len() + action_id.len() + 1);
     identity.extend_from_slice(parent_session_id.as_bytes());
@@ -127,7 +126,7 @@ impl ProjectionState {
 pub(crate) enum Identity {
     Root,
     Fork,
-    Subagent { parent: String, spawn_key: String },
+    Subagent { parent: String },
 }
 
 /// The runtime state fields the reader consumes (fact D).
@@ -720,7 +719,7 @@ fn runtime_identity(
                     "subagent session_id must differ from its root and parent".to_string(),
                 ));
             }
-            let spawn_key = metadata
+            metadata
                 .get("subagent_spawn_key")
                 .and_then(Value::as_str)
                 .filter(|key| !key.is_empty())
@@ -731,7 +730,6 @@ fn runtime_identity(
                 })?;
             Ok(Identity::Subagent {
                 parent: parent_id.to_string(),
-                spawn_key: spawn_key.to_string(),
             })
         }
         other => Err(UnifiedError::Corrupt(format!(
@@ -1431,8 +1429,8 @@ mod tests {
         assert_eq!(loaded.runtime.session_id, CHILD_A);
         assert!(matches!(
             &loaded.runtime.identity,
-            Identity::Subagent { parent, spawn_key }
-                if parent == R302 && spawn_key == "act-spawn-explicit"
+            Identity::Subagent { parent }
+                if parent == R302
         ));
     }
 

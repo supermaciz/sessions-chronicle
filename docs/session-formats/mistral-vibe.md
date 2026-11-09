@@ -64,9 +64,10 @@ reuse a call ID in a later turn. The child's `session_metadata.subagent_spawn_ke
 is still the spawn `action_id`
 ([`_controller.py`](https://github.com/mistralai/mistral-vibe/blob/v3.1.0/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_subagents/_controller.py)), and the
 admission sequence is not stored in the child's own metadata. The reader on
-`main` still derives `child-` from `parent \0 action_id` and rejects any
-mismatch as `IdentityConflict`, so **subagent sessions written by Vibe ≥ 3.1.0
-are not indexed** (root sessions are unaffected) until the parser is updated.
+The reader accepts children after validating their store identity and parent
+metadata. Parent effects link through their explicit `childSessionId` when the
+matching child is indexed; legacy effects without that field retain the
+pre-3.1.0 derived-ID fallback.
 Other 3.1.0 store changes: the depth-one ownership check was dropped from
 `SubagentSessionIdentity` (`ChildSessionRecord.depth` is still `Literal[1]`);
 `ChildSessionRecord` / `SpawnInput` gain an optional `instructions`; canonical

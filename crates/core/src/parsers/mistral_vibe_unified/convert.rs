@@ -24,10 +24,10 @@ use crate::parsers::{ParsedSession, PendingReasoning, extract_first_prompt};
 use super::effects;
 use super::error::UnifiedError;
 use super::saved_results::SavedResultResolver;
-use super::store::{Identity, LoadedStore, child_session_id, reject_symlink};
+use super::store::{Identity, LoadedStore, reject_symlink};
 
 /// Parser for Mistral Vibe Unified session stores
-/// (`<vibe-root>/unified/<id>/`, Vibe 3.0.x).
+/// (`<vibe-root>/unified/<id>/`, Vibe 3.x).
 pub struct MistralVibeUnifiedParser;
 
 impl MistralVibeUnifiedParser {
@@ -146,20 +146,11 @@ pub(crate) fn convert(
         )
     });
 
-    // Only subagent identities are children; forks stay top-level.  Fact
-    // J self-verification: a child's session id must derive from its
-    // parent id and spawn key, so a forged or stale child directory is an
-    // identity conflict.
+    // Only subagent identities are children; forks stay top-level. Vibe
+    // 3.1.0 adds an admission sequence to child IDs but does not persist it
+    // in the child metadata, so the ID cannot be independently re-derived.
     let (parent_session_id, is_subagent) = match &store.runtime.identity {
-        Identity::Subagent { parent, spawn_key } => {
-            let derived = child_session_id(parent, spawn_key);
-            if derived != session_id {
-                return Err(UnifiedError::IdentityConflict(format!(
-                    "subagent session id {session_id} does not match the child id {derived} derived from parent {parent} and spawn key {spawn_key}"
-                )));
-            }
-            (Some(parent.clone()), true)
-        }
+        Identity::Subagent { parent, .. } => (Some(parent.clone()), true),
         Identity::Root | Identity::Fork => (None, false),
     };
 

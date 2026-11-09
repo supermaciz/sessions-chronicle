@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 use super::{IndexingStats, SessionIndexer, push_indexing_error};
 use crate::models::{AiAssistant, IndexingError};
 use crate::parsers::mistral_vibe_unified::{
-    MistralVibeUnifiedParser, UnifiedError, UnifiedParse, UnifiedSignature, child_session_id,
-    is_unified_session_dir,
+    MistralVibeUnifiedParser, UnifiedError, UnifiedParse, UnifiedSignature, is_unified_session_dir,
 };
 use anyhow::Result;
 use rusqlite::OptionalExtension;
@@ -422,20 +421,20 @@ impl SessionIndexer {
         } else {
             &parsed.session.id
         };
-        let mut stmt = tx.prepare("SELECT subagents.id, subagents.agent_id, subagents.parser_ref, child.file_path FROM subagents JOIN sessions parent ON parent.id=subagents.session_id JOIN sessions child ON child.id=subagents.agent_id WHERE parent.id=?1 AND parent.is_subagent=0 AND parent.tool='mistral_vibe' AND child.tool='mistral_vibe' AND child.is_subagent=1 AND child.parent_session_id=parent.id")?;
+        let mut stmt = tx.prepare("SELECT subagents.id, subagents.agent_id, child.file_path FROM subagents JOIN sessions parent ON parent.id=subagents.session_id JOIN sessions child ON child.id=subagents.agent_id WHERE parent.id=?1 AND parent.is_subagent=0 AND parent.tool='mistral_vibe' AND child.tool='mistral_vibe' AND child.is_subagent=1 AND child.parent_session_id=parent.id")?;
         let rows = stmt.query_map([parent], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, String>(3)?,
+                r.get::<_, String>(2)?,
             ))
         })?;
         for row in rows {
-            let (effect, child, action, file_path) = row?;
-            if action.is_some_and(|action| child_session_id(parent, &action) == child)
-                && is_unified_session_dir(Path::new(&file_path))
-            {
+            let (effect, child, file_path) = row?;
+            // Vibe 3.1.0 child IDs include an admission sequence absent from
+            // child metadata. The session join above verifies the explicit
+            // childSessionId against a parsed child declaring this parent.
+            if is_unified_session_dir(Path::new(&file_path)) {
                 tx.execute(
                     "UPDATE subagents SET child_session_id=?1 WHERE id=?2",
                     rusqlite::params![child, effect],

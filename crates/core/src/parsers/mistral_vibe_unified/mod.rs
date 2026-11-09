@@ -1,4 +1,4 @@
-//! Reader for Mistral Vibe 3.0.x Unified session stores
+//! Reader for Mistral Vibe 3.x Unified session stores
 //! (`<vibe-root>/unified/<id>/`, `mistral.vibe.unified-session-store/v1`).
 
 pub(crate) mod canonical;

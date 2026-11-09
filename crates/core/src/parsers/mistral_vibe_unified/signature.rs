@@ -26,7 +26,7 @@ use super::store::FileSample;
 /// state-union, and identity-validation fixes. Version 3 backfills tool-call and
 /// subagent model attribution. Keep the maintenance policy in
 /// `docs/session-formats/mistral-vibe.md` aligned with this contract.
-pub const UNIFIED_READER_VERSION: u32 = 3;
+pub const UNIFIED_READER_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UnifiedSignature {
