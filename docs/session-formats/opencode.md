@@ -56,6 +56,24 @@ Confirmed on 2026-10-14 from upstream `dev`
 > The V2 reader still selects explicit `session_v2` / `session_message`
 > columns and only projects inline `content`, so it is **not broken** yet;
 > watch for a future backfill that empties inline content.
+>
+> **Format watch 2026-11-09 (`dev` `12a661ea4`, tags v2.2.0 → v2.2.6):** the v2
+> line is tagged again ([v2.2.0](https://github.com/anomalyco/opencode/releases/tag/v2.2.0), 2026-10-27, through
+> [v2.2.6](https://github.com/anomalyco/opencode/releases/tag/v2.2.6), `dc2ffcf8`, 2026-11-06; npm
+> `opencode-ai` latest is still the v1 line, 1.19.5). No new migration and no
+> change to `session-message.ts` or `session/sql.ts` since `67139d682`.
+> [`6000b7c51`](https://github.com/anomalyco/opencode/commit/6000b7c51) (in v2.2.6) adds the opt-in
+> `experimental.part_rows` config flag (default `false`): when on, each
+> assistant part is written as its own `session_part` row instead of rewriting
+> `session_message.data.content`, and upstream reads the message back as
+> `parts + inline content`. The V2 reader only projects inline `content`, so
+> sessions written with `part_rows` on would show empty or partial assistant
+> messages (likely, not reproduced). [`66b25c2bf`](https://github.com/anomalyco/opencode/commit/66b25c2bf) adds a
+> feature-flag registry (`packages/schema/src/config/flag.ts`: `todo`,
+> `background_compaction`, `media_blob`, `schedules`, `artifacts`,
+> `codemode_vm`) whose flags are **on by default in `local` / `dev` builds**
+> and off in releases; `media_blob` now also moves tool-part file references
+> into `blob`/`blob_ref`. `part_rows` is not in that registry yet.
 
 ### Schema
 
