@@ -1024,6 +1024,8 @@ fn vibe_310_child_with_admission_sequence_is_indexed_and_linked() {
 fn vibe_310_child_with_foreign_spawn_key_is_not_linked() {
     let mut h = Harness::empty();
     h.copy("vibe_unified_variants/vibe-310");
+    assert!(h.run(true).1.is_empty());
+    assert_eq!(h.links(VIBE310), vec![Some(VIBE310_CHILD.to_string())]);
     rewrite_document(&h.dir(VIBE310_CHILD), "runtime-state.json", |document| {
         document["session_metadata"]["subagent_spawn_key"] = serde_json::json!("act-other");
     });

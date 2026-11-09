@@ -271,7 +271,7 @@ The implementation follows pinned upstream facts **E–K** in
 validation and chaining; F, projection replay operations and watermarks; G,
 snapshot envelope; H, entry shapes; I, skill invocation display; J,
 deterministic child identity (`sha256(parent \0 action_id)` through v3.0.4;
-v3.1.0 adds `\0 admission_sequence`, not yet handled — see the 2026-11-09
+v3.1.0 adds `\0 admission_sequence`, supported through explicit child IDs — see the 2026-11-09
 format-watch note above); K, offloaded large tool-result resolution.
 `checkpoint.json` is not read. Neither are `scheduled-loops.json`, the sibling
 `.session-index.json` catalog, or `scratchpad/`.
@@ -317,7 +317,7 @@ Keep these version domains separate:
 | Version | Purpose |
 |---|---|
 | Vibe `store_format` / `store_format_minor` (reader accepts 9 and 10; 8 and 11+ rejected) | Which upstream on-disk format the reader accepts. |
-| `UNIFIED_READER_VERSION` (currently 4) | Whether a prior successful Unified read may still be skipped. |
+| `UNIFIED_READER_VERSION` (currently 5) | Whether a prior successful Unified read may still be skipped. |
 | SQLite schema version | Structure of Sessions Chronicle's index database; changing reader semantics alone does not require a schema migration. |
 
 ---

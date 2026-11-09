@@ -413,6 +413,12 @@ impl SessionIndexer {
         if !is_unified_session_dir(Path::new(&parsed.session.file_path)) {
             return Ok(());
         }
+        // Replacing a child's metadata can invalidate links from its former
+        // parent as well as the current one. Rebuild links in this transaction.
+        tx.execute(
+            "UPDATE subagents SET child_session_id=NULL WHERE child_session_id=?1",
+            [&parsed.session.id],
+        )?;
         let parent = if parsed.session.is_subagent {
             let Some(parent) = parsed.session.parent_session_id.as_deref() else {
                 return Ok(());
@@ -421,6 +427,10 @@ impl SessionIndexer {
         } else {
             &parsed.session.id
         };
+        tx.execute(
+            "UPDATE subagents SET child_session_id=NULL WHERE session_id=?1",
+            [parent],
+        )?;
         let mut stmt = tx.prepare("SELECT subagents.id, subagents.agent_id, child.file_path FROM subagents JOIN sessions parent ON parent.id=subagents.session_id JOIN sessions child ON child.id=subagents.agent_id WHERE parent.id=?1 AND parent.is_subagent=0 AND parent.tool='mistral_vibe' AND child.tool='mistral_vibe' AND child.is_subagent=1 AND child.parent_session_id=parent.id AND child.agent_path=subagents.parser_ref")?;
         let rows = stmt.query_map([parent], |r| {
             Ok((
