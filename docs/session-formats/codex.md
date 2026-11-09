@@ -42,6 +42,18 @@ top-level `type` dispatch in `crates/core/src/parsers/codex.rs` only handles
 `response_item`, `turn_context` and `event_msg`, so these lines fall through
 the catch-all arm and are skipped.
 
+**Format watch 2026-11-09: stable `rust-v0.167.0`**
+([`086ccc83`](https://github.com/openai/codex/releases/tag/rust-v0.167.0), released 2026-11-05;
+`main` `8703d32b`; npm latest 0.167.0 / alpha 0.169.0-alpha.3). Diff vs 0.166.0:
+`ContentItem::InputAudio` now flattens an untagged `AudioReference`, so an
+`input_audio` item carries either `audio_url` or `file_id`
+([`models.rs`](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/protocol/src/models.rs));
+`UserMessageEvent` gains optional `audio_references` and `audio_order`; the new
+`EventMsg::NetworkApprovalResolved` is `#[serde(skip)]` and listed as not
+persisted in
+[`policy.rs`](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/rollout/src/policy.rs).
+Paths and file naming unchanged; the parser does not read audio content.
+
 **Desktop/import watch: 2026-10-04; documented 2026-10-11.** The focused
 check below does not refresh the protocol comparison above.
 

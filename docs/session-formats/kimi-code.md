@@ -53,6 +53,18 @@ conversation can therefore be indexed both from its original Claude Code /
 Codex file and as a Kimi session; `custom.imported_from` is the marker. The
 parser already tolerates unknown wire record types, so 2.4.x is not a breakage.
 
+**Format watch 2026-11-09 (2.5.2 + main `27bd9bab`):** npm latest
+[2.5.2](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) (2.5.0 on
+2026-11-04, 2.5.2 on 2026-11-06; canary 2.6.0). `WIRE_PROTOCOL_VERSION` still
+`'1.5'`; the 69-type durable manifest seen on `main` on 2026-11-02 is now
+released, plus an optional `objective` field. 2.5.0 adds forking a running
+session and forking from a historical turn
+([#4544](https://github.com/MoonshotAI/kimi-code/pull/4544)) and creation-time SSH / Docker /
+custom-command environments ([#4062](https://github.com/MoonshotAI/kimi-code/pull/4062)).
+Unreleased on `main`: the wire metadata header gains
+`min_protocol_version: "1.5"` (`wire-manifest.d.ts`); the parser does not
+read header protocol fields.
+
 ---
 
 ## Storage & File Naming

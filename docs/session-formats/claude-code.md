@@ -595,6 +595,18 @@ capture). Subagent path unchanged; no confirmed new top-level JSONL `type`:
 - v2.1.314: `--resume` is faster and uses less memory on damaged transcripts
   (no format change).
 
+Added by the 2026-11-09 format-watch pass (changelog v2.1.317–v2.1.319, npm
+latest/next 2.1.319, stable 2.1.311, Agent SDK 0.3.319; no fresh local
+capture). No documented path, file-naming or JSONL field change:
+
+- v2.1.317: `claude -p` run inside a cloud or self-hosted runner session now
+  gets its own session ID and transcript instead of writing into the parent
+  session's transcript; `CLAUDE_CODE_DISABLE_NESTED_SESSION_ID=1` restores the
+  old behavior.
+- v2.1.319: MCP tool calls that a server runs as a task move to the background
+  and report their result later; the resulting transcript records are not yet
+  captured locally (likely a deferred tool result).
+
 ### Meta Flag
 
 - `isMeta: true` → Skip for title extraction (system-generated)
@@ -1024,6 +1036,7 @@ machine, and proxy low-skip workloads.
 - [Claude Code CHANGELOG.md (v2.1.300 API request recording entry)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)
 - [Claude Code CHANGELOG.md v2.1.304–v2.1.310 (transcript completeness entries)](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21310)
 - [Claude Code CHANGELOG.md through 2.1.316](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21316)
+- [Claude Code CHANGELOG.md through 2.1.319](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21319)
 - [Claude Code model configuration (official; aliases, version history, full model names)](https://code.claude.com/docs/en/model-config)
 - [Models overview (API model IDs)](https://platform.claude.com/docs/en/about-claude/models/overview)
 - [Claude Code issue: duplicate entries in session logs](https://github.com/anthropics/claude-code/issues/1524)

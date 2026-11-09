@@ -53,6 +53,30 @@ and reject higher ones. Sessions Chronicle accepts the exact set {9, 10} in
 The minor-10 regression store is
 `tests/fixtures/vibe_unified_variants/minor-10/`.
 
+**Format watch 2026-11-09:** `main` / tag
+[v3.1.0](https://github.com/mistralai/mistral-vibe/releases/tag/v3.1.0)
+(`c96a6dbb`, 2026-11-03), PyPI `mistral-vibe` 3.1.0; `STORE_FORMAT_MINOR` is
+still **10**. **Child session identity changed (pinned fact J is stale):**
+[`child_session_id`](https://github.com/mistralai/mistral-vibe/blob/v3.1.0/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_subagents/_operations.py)
+now hashes `parent_session_id \0 action_id \0 admission_sequence` (still
+`child-` + the first 24 hex digits of the SHA-256), because a provider can
+reuse a call ID in a later turn. The child's `session_metadata.subagent_spawn_key`
+is still the spawn `action_id`
+([`_controller.py`](https://github.com/mistralai/mistral-vibe/blob/v3.1.0/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_subagents/_controller.py)), and the
+admission sequence is not stored in the child's own metadata. The reader on
+`main` still derives `child-` from `parent \0 action_id` and rejects any
+mismatch as `IdentityConflict`, so **subagent sessions written by Vibe ≥ 3.1.0
+are not indexed** (root sessions are unaffected) until the parser is updated.
+Other 3.1.0 store changes: the depth-one ownership check was dropped from
+`SubagentSessionIdentity` (`ChildSessionRecord.depth` is still `Literal[1]`);
+`ChildSessionRecord` / `SpawnInput` gain an optional `instructions`; canonical
+JSON now writes integers of any magnitude exactly
+([`_storage.py`](https://github.com/mistralai/mistral-vibe/blob/v3.1.0/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_storage.py)) — the reader only
+re-canonicalizes `CURRENT` and the manifest, and digest-checks every other
+document over its raw bytes; settled runtime Actions (now including `process`)
+are released whole instead of having their bodies pruned — the reader does not
+read `actions`.
+
 ### Storage & File Naming
 
 | Field   | Value |
@@ -239,7 +263,9 @@ The implementation follows pinned upstream facts **E–K** in
 `docs/superpowers/plans/2026-10-23-mistral-vibe-unified.md`: E, journal record
 validation and chaining; F, projection replay operations and watermarks; G,
 snapshot envelope; H, entry shapes; I, skill invocation display; J,
-deterministic child identity; K, offloaded large tool-result resolution.
+deterministic child identity (`sha256(parent \0 action_id)` through v3.0.4;
+v3.1.0 adds `\0 admission_sequence`, not yet handled — see the 2026-11-09
+format-watch note above); K, offloaded large tool-result resolution.
 `checkpoint.json` is not read. Neither are `scheduled-loops.json`, the sibling
 `.session-index.json` catalog, or `scratchpad/`.
 
