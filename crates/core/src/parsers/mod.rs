@@ -94,7 +94,9 @@ pub struct ParsedSession {
     pub reasoning_attachments: Vec<ReasoningAttachment>,
     pub context_entries: Vec<ContextEntry>,
     pub token_usage: Option<TokenUsage>,
-    /// Full task path of a Codex child session (`/root/analyze`); `None` elsewhere.
+    /// Spawn identity of a child session within its parent: the full Codex
+    /// task path (`/root/analyze`) or a Unified Mistral Vibe child's spawn key
+    /// (its spawn action ID); `None` elsewhere.
     pub agent_path: Option<String>,
 }
 

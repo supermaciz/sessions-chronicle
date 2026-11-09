@@ -63,11 +63,17 @@ now hashes `parent_session_id \0 action_id \0 admission_sequence` (still
 reuse a call ID in a later turn. The child's `session_metadata.subagent_spawn_key`
 is still the spawn `action_id`
 ([`_controller.py`](https://github.com/mistralai/mistral-vibe/blob/v3.1.0/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_subagents/_controller.py)), and the
-admission sequence is not stored in the child's own metadata. The reader on
-The reader accepts children after validating their store identity and parent
-metadata. Parent effects link through their explicit `childSessionId` when the
-matching child is indexed; legacy effects without that field retain the
-pre-3.1.0 derived-ID fallback.
+admission sequence is not stored in the child's own metadata. The reader
+therefore no longer re-derives a child's ID: it accepts a subagent child after
+validating its store identity and parent metadata, and keeps its
+`subagent_spawn_key` (stored as `sessions.agent_path`). The indexer links a
+parent spawn effect to a child only when the effect's `childSessionId` names
+it, the child declares that parent, **and** the child's spawn key equals the
+effect's spawn `action_id` (`subagents.parser_ref`). Legacy effects without
+`childSessionId` keep the pre-3.1.0 derived-ID fallback. A child directory that
+no spawn effect claims is still indexed as a subagent of its declared parent,
+but stays unlinked. The 3.1.0 regression store is
+`tests/fixtures/vibe_unified_variants/vibe-310/`.
 Other 3.1.0 store changes: the depth-one ownership check was dropped from
 `SubagentSessionIdentity` (`ChildSessionRecord.depth` is still `Literal[1]`);
 `ChildSessionRecord` / `SpawnInput` gain an optional `instructions`; canonical
@@ -311,7 +317,7 @@ Keep these version domains separate:
 | Version | Purpose |
 |---|---|
 | Vibe `store_format` / `store_format_minor` (reader accepts 9 and 10; 8 and 11+ rejected) | Which upstream on-disk format the reader accepts. |
-| `UNIFIED_READER_VERSION` (currently 2) | Whether a prior successful Unified read may still be skipped. |
+| `UNIFIED_READER_VERSION` (currently 4) | Whether a prior successful Unified read may still be skipped. |
 | SQLite schema version | Structure of Sessions Chronicle's index database; changing reader semantics alone does not require a schema migration. |
 
 ---

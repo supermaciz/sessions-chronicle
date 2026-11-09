@@ -24,7 +24,10 @@ use super::store::FileSample;
 ///
 /// Version 2 invalidates signatures published before the journal-digest,
 /// state-union, and identity-validation fixes. Version 3 backfills tool-call and
-/// subagent model attribution. Keep the maintenance policy in
+/// subagent model attribution. Version 4 re-reads Vibe >= 3.1.0 subagent
+/// children (previously rejected because their IDs hash an admission sequence)
+/// and records every child's spawn key for the indexer's link check. Keep the
+/// maintenance policy in
 /// `docs/session-formats/mistral-vibe.md` aligned with this contract.
 pub const UNIFIED_READER_VERSION: u32 = 4;
 

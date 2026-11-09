@@ -126,7 +126,7 @@ impl ProjectionState {
 pub(crate) enum Identity {
     Root,
     Fork,
-    Subagent { parent: String },
+    Subagent { parent: String, spawn_key: String },
 }
 
 /// The runtime state fields the reader consumes (fact D).
@@ -719,7 +719,7 @@ fn runtime_identity(
                     "subagent session_id must differ from its root and parent".to_string(),
                 ));
             }
-            metadata
+            let spawn_key = metadata
                 .get("subagent_spawn_key")
                 .and_then(Value::as_str)
                 .filter(|key| !key.is_empty())
@@ -730,6 +730,7 @@ fn runtime_identity(
                 })?;
             Ok(Identity::Subagent {
                 parent: parent_id.to_string(),
+                spawn_key: spawn_key.to_string(),
             })
         }
         other => Err(UnifiedError::Corrupt(format!(
@@ -1429,8 +1430,8 @@ mod tests {
         assert_eq!(loaded.runtime.session_id, CHILD_A);
         assert!(matches!(
             &loaded.runtime.identity,
-            Identity::Subagent { parent }
-                if parent == R302
+            Identity::Subagent { parent, spawn_key }
+                if parent == R302 && spawn_key == "act-spawn-explicit"
         ));
     }
 

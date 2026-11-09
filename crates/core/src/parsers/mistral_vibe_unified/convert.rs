@@ -148,10 +148,14 @@ pub(crate) fn convert(
 
     // Only subagent identities are children; forks stay top-level. Vibe
     // 3.1.0 adds an admission sequence to child IDs but does not persist it
-    // in the child metadata, so the ID cannot be independently re-derived.
-    let (parent_session_id, is_subagent) = match &store.runtime.identity {
-        Identity::Subagent { parent, .. } => (Some(parent.clone()), true),
-        Identity::Root | Identity::Fork => (None, false),
+    // in the child metadata, so the ID cannot be re-derived here. The spawn
+    // key (the spawn action ID) is kept instead: the indexer only links a
+    // child to the parent effect whose action ID equals it.
+    let (parent_session_id, is_subagent, spawn_key) = match &store.runtime.identity {
+        Identity::Subagent { parent, spawn_key } => {
+            (Some(parent.clone()), true, Some(spawn_key.clone()))
+        }
+        Identity::Root | Identity::Fork => (None, false, None),
     };
 
     // Model attribution (fact H): once any model_change checkpoint exists,
@@ -354,7 +358,7 @@ pub(crate) fn convert(
         transcript_items,
         reasoning_attachments,
         token_usage,
-        agent_path: None,
+        agent_path: spawn_key,
         context_entries: Vec::new(),
     })
 }

@@ -421,7 +421,7 @@ impl SessionIndexer {
         } else {
             &parsed.session.id
         };
-        let mut stmt = tx.prepare("SELECT subagents.id, subagents.agent_id, child.file_path FROM subagents JOIN sessions parent ON parent.id=subagents.session_id JOIN sessions child ON child.id=subagents.agent_id WHERE parent.id=?1 AND parent.is_subagent=0 AND parent.tool='mistral_vibe' AND child.tool='mistral_vibe' AND child.is_subagent=1 AND child.parent_session_id=parent.id")?;
+        let mut stmt = tx.prepare("SELECT subagents.id, subagents.agent_id, child.file_path FROM subagents JOIN sessions parent ON parent.id=subagents.session_id JOIN sessions child ON child.id=subagents.agent_id WHERE parent.id=?1 AND parent.is_subagent=0 AND parent.tool='mistral_vibe' AND child.tool='mistral_vibe' AND child.is_subagent=1 AND child.parent_session_id=parent.id AND child.agent_path=subagents.parser_ref")?;
         let rows = stmt.query_map([parent], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -431,9 +431,10 @@ impl SessionIndexer {
         })?;
         for row in rows {
             let (effect, child, file_path) = row?;
+            // Ownership evidence: the child declares this parent and its spawn
+            // key (stored as `agent_path`) equals the effect's spawn action ID.
             // Vibe 3.1.0 child IDs include an admission sequence absent from
-            // child metadata. The session join above verifies the explicit
-            // childSessionId against a parsed child declaring this parent.
+            // child metadata, so the ID itself is not re-derived.
             if is_unified_session_dir(Path::new(&file_path)) {
                 tx.execute(
                     "UPDATE subagents SET child_session_id=?1 WHERE id=?2",

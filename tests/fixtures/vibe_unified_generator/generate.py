@@ -49,6 +49,14 @@ def child_session_id(parent: str, action_id: str) -> str:
     return "child-" + digest[:24]
 
 
+def child_session_id_v310(parent: str, action_id: str, admission_sequence: int) -> str:
+    """Vibe >= 3.1.0 child id: also hashes the admission sequence, which the
+    child's own metadata does not store."""
+    identity = parent + "\0" + action_id + "\0" + str(admission_sequence)
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return "child-" + digest[:24]
+
+
 CHILD_A = child_session_id(R302, "act-spawn-explicit")
 CHILD_B = child_session_id(R302, "act-spawn-derived")
 CHILD_C = child_session_id(F301, "act-spawn-fork")
@@ -70,6 +78,8 @@ V_DEEPER_GRANDCHILD = child_session_id(V_DEEPER_CHILD, "act-spawn-grand")
 V_EMPTY = "cccccccc-0000-4000-8000-00000000000b"
 V_RECOVERED = "cccccccc-0000-4000-8000-00000000000c"
 V_MINOR_10 = "cccccccc-0000-4000-8000-00000000000d"
+V_VIBE310 = "cccccccc-0000-4000-8000-00000000000e"
+V_VIBE310_CHILD = child_session_id_v310(V_VIBE310, "act-spawn-310", 2)
 
 # --------------------------------------------------------------------------
 # Fixed fixture time base: every timestamp derives from T0, never the clock.
@@ -1492,9 +1502,9 @@ def _variant_store(unified_root: Path, session_id: str, entries, *, runtime_stat
 
 
 def _variant_root_with_child(unified_root: Path, root_id: str, child_id: str, *,
-                             lifecycle=None):
+                             lifecycle=None, action_id="act-spawn-del", label="Deleting"):
     spawn = effect(
-        "act-spawn-del",
+        action_id,
         "agents.spawn",
         "completed",
         "t1",
@@ -1502,10 +1512,10 @@ def _variant_root_with_child(unified_root: Path, root_id: str, child_id: str, *,
         title="Spawn worker",
         agent_name="worker",
         child_session_id=child_id,
-        input={"task": "Deleting child task", "agent": "generic"},
-        outputText="Deleting child done",
+        input={"task": f"{label} child task", "agent": "generic"},
+        outputText=f"{label} child done",
     )
-    entries = _pair("Deleting question", "Deleting answer") + [spawn]
+    entries = _pair(f"{label} question", f"{label} answer") + [spawn]
     _variant_store(
         unified_root,
         root_id,
@@ -1516,10 +1526,10 @@ def _variant_root_with_child(unified_root: Path, root_id: str, child_id: str, *,
     _variant_store(
         unified_root,
         child_id,
-        _pair("Deleting child task", "Deleting child done"),
+        _pair(f"{label} child task", f"{label} child done"),
         runtime_state=runtime(
             "subagent", child_id, root_id, root_id, 1, CWD_VARIANT, "mistral-large-4",
-            spawn_key="act-spawn-del",
+            spawn_key=action_id,
         ),
     )
 
@@ -1549,6 +1559,12 @@ def build_variants(variants_root: Path) -> int:
         },
     )
     count += 4
+
+    # vibe-310: a Vibe >= 3.1.0 child whose id hashes an admission sequence
+    # (2) the child does not store; only its spawn key ties it to the effect.
+    _variant_root_with_child(unified("vibe-310"), V_VIBE310, V_VIBE310_CHILD,
+                             action_id="act-spawn-310", label="Vibe 3.1")
+    count += 2
 
     # rollover/gen1: generation 1 with two deltas adding the second exchange.
     u1 = message("u1", "user", "t1", ts(1), [text_block("First question")], source="turn_start")

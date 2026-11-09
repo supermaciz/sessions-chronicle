@@ -26,7 +26,7 @@ Writes (overwriting in place, never deleting):
 - the legacy pair `tests/fixtures/vibe_sessions/session_20261020_100000_bbbbbbbb/`
   (`meta.json` + `messages.jsonl`) that the migrated session's
   `import_provenance` points at
-- 19 variant stores under `tests/fixtures/vibe_unified_variants/<name>/unified/`
+- 21 variant stores under `tests/fixtures/vibe_unified_variants/<name>/unified/`
   plus the sibling `tests/fixtures/vibe_unified_variants/growing/append.jsonl`
 
 and prints the derived child session IDs (pinned fact J:
@@ -39,6 +39,10 @@ child session ids:
   CHILD_B (aaaaaaaa-0000-4000-8000-000000000302 / act-spawn-derived) = child-600cf6121578955c8405618d
   CHILD_C (aaaaaaaa-0000-4000-8000-000000000301 / act-spawn-fork)    = child-4c966d1f1f932580b090cfb5
 ```
+
+The `vibe-310` variant instead uses the Vibe ≥ 3.1.0 formula,
+`"child-" + sha256(parent + "\0" + action_id + "\0" + admission_sequence)[:24]`
+(`child_session_id_v310`), with admission sequence 2.
 
 Rust test modules repeat the store IDs as constants and re-derive the child
 IDs with the reader's `child_session_id`; the generator output is the
@@ -186,7 +190,7 @@ cccccccc-0000-4000-8000-000000000004 entries=3
 | `child-4c966d1f1f932580b090cfb5` | subagent of the fork |
 | `aaaaaaaa-0000-4000-8000-000000000004` | legacy import (`import_provenance.source.backend = "legacy"`, session `bbbbbbbb-0000-4000-8000-000000000004`) |
 | `session_20261020_100000_bbbbbbbb/` | legacy pair the import points at (outside `unified/`) |
-| variants `ephemeral`, `deleting/active`, `deleting/deleting`, `rollover/gen1`, `rollover/gen2`, `growing`, `unknown-op`, `unknown-record`, `unknown-entry`, `unknown-checkpoint`, `unknown-status`, `deeper`, `empty`, `recovered`, `minor-10` | minimal stores (IDs `cccccccc-0000-4000-8000-0000000000NN`) exercising one behavior each; `unknown-*` are intentionally rejected by a correct reader. `minor-10` is a Vibe ≥ 3.0.3 store (`store_format_minor` 10) whose first `core_input` omits baselines the generation already records |
+| variants `ephemeral`, `deleting/active`, `deleting/deleting`, `rollover/gen1`, `rollover/gen2`, `growing`, `unknown-op`, `unknown-record`, `unknown-entry`, `unknown-checkpoint`, `unknown-status`, `deeper`, `empty`, `recovered`, `minor-10`, `vibe-310` | minimal stores (IDs `cccccccc-0000-4000-8000-0000000000NN`) exercising one behavior each; `unknown-*` are intentionally rejected by a correct reader. `minor-10` is a Vibe ≥ 3.0.3 store (`store_format_minor` 10) whose first `core_input` omits baselines the generation already records. `vibe-310` is a root plus a Vibe ≥ 3.1.0 child whose ID hashes an admission sequence |
 
 Note: these fixtures temporarily change the legacy Vibe session count under
 `tests/fixtures/vibe_sessions/` (the unified reader ships in a later task),
