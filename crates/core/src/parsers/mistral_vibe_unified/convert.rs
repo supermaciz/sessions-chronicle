@@ -307,7 +307,10 @@ pub(crate) fn convert(
                     }
                 }
             }
-            "notice" => {}
+            // A settled callback (an answered question) is kept in history;
+            // its question and answer already reach the transcript through
+            // the related `ask_user_question` effect.
+            "notice" | "callback" => {}
             other => {
                 return Err(UnifiedError::Unsupported(format!("entry type {other:?}")));
             }
@@ -1032,6 +1035,29 @@ mod tests {
         );
         assert_eq!(parsed.subagents.len(), 1);
         assert_eq!(parsed.subagents[0].source_model.as_deref(), Some("m-one"));
+    }
+
+    #[test]
+    fn settled_callback_entries_are_skipped() {
+        // Vibe keeps an answered `ask_user_question` in the projection as a
+        // `callback` entry; its question and answer already reach the
+        // transcript through the related tool call effect.
+        let callback = json!({
+            "type":"callback", "id":"user-input-q1", "callbackId":"user-input-q1",
+            "turnId":"t1", "createdAt":T0_MS, "updatedAt":T0_MS,
+            "generationStatus":"completed", "relatedEntryId":"q1",
+            "title":"User input required",
+            "detail":{"kind":"user_input", "relatedEntryId":"q1", "request":{"questions":[]}},
+            "state":{"status":"answered", "output":{"type":"user_input", "result":{"answers":[], "cancelled":false}}}
+        });
+        let parsed = convert_entries(vec![
+            user_message("u1", json!([{"type":"text", "text":"Hi"}])),
+            callback,
+            model_effect("e1", false),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.tool_calls.len(), 1);
     }
 
     #[test]

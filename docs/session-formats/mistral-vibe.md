@@ -286,6 +286,13 @@ owned Unified rows in the same source root; legacy nested-child behavior is
 unchanged. Unknown minor-9 state variants (including `pending` effect states)
 are unsupported rather than presented as successful activity.
 
+Projection history entries are `message`, `reasoning`, `effect`, `checkpoint`,
+`notice`, and `callback`; any other type is unsupported. `notice` and
+`callback` entries are skipped. A `callback` entry is a settled question that
+Vibe keeps in history (`detail.kind` `user_input`, `state.status` `answered`).
+Its question and answer already reach the transcript through the related
+`ask_user_question` tool call effect.
+
 #### Reader Semantic Version and Incremental Invalidation
 
 `UNIFIED_READER_VERSION` in
