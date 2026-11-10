@@ -1,6 +1,7 @@
 use super::super::IndexingRuntimeState;
 use super::*;
 use crate::parsers::mistral_vibe_unified::canonical::sha256_hex;
+use crate::parsers::mistral_vibe_unified::child_session_id;
 use crate::parsers::mistral_vibe_unified::store::test_support::{copy_tree, rewrite_document};
 use std::fs;
 use std::io::Write;
@@ -16,6 +17,10 @@ const CHILD_C: &str = "child-4c966d1f1f932580b090cfb5";
 const GROW: &str = "cccccccc-0000-4000-8000-000000000004";
 const DELETE: &str = "cccccccc-0000-4000-8000-000000000002";
 const DELETE_CHILD: &str = "child-a56c92821fcc4b3521ae913d";
+const VIBE310: &str = "cccccccc-0000-4000-8000-00000000000e";
+/// `child-` + sha256(VIBE310 \0 act-spawn-310 \0 2): a Vibe 3.1.0 child ID
+/// hashing an admission sequence the child does not store.
+const VIBE310_CHILD: &str = "child-9a1eb6423d8760f12b421e36";
 
 struct Harness {
     temp: TempDir,
@@ -986,6 +991,47 @@ fn meta_json_appearing_invalidates_signature() {
     assert!(h.run(true).1.is_empty());
     fs::write(h.dir(GROW).join("meta.json"), b"{}").unwrap();
     assert_eq!(h.run(true).0.indexed, 1);
+}
+
+#[test]
+fn vibe_310_child_with_admission_sequence_is_indexed_and_linked() {
+    assert_ne!(child_session_id(VIBE310, "act-spawn-310"), VIBE310_CHILD);
+    for (first, second) in [(VIBE310, VIBE310_CHILD), (VIBE310_CHILD, VIBE310)] {
+        // Linking holds whichever side the indexer publishes first.
+        let mut h = Harness::empty();
+        h.copy("vibe_unified_variants/vibe-310");
+        fs::remove_dir_all(h.dir(second)).unwrap();
+        assert!(h.run(true).1.is_empty());
+        assert!(h.exists(first));
+        h.copy("vibe_unified_variants/vibe-310");
+        assert!(h.run(true).1.is_empty());
+        let (is_subagent, parent): (bool, Option<String>) = h
+            .indexer
+            .db
+            .query_row(
+                "SELECT is_subagent, parent_session_id FROM sessions WHERE id=?1",
+                [VIBE310_CHILD],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(is_subagent);
+        assert_eq!(parent.as_deref(), Some(VIBE310));
+        assert_eq!(h.links(VIBE310), vec![Some(VIBE310_CHILD.to_string())]);
+    }
+}
+
+#[test]
+fn vibe_310_child_with_foreign_spawn_key_is_not_linked() {
+    let mut h = Harness::empty();
+    h.copy("vibe_unified_variants/vibe-310");
+    assert!(h.run(true).1.is_empty());
+    assert_eq!(h.links(VIBE310), vec![Some(VIBE310_CHILD.to_string())]);
+    rewrite_document(&h.dir(VIBE310_CHILD), "runtime-state.json", |document| {
+        document["session_metadata"]["subagent_spawn_key"] = serde_json::json!("act-other");
+    });
+    assert!(h.run(true).1.is_empty());
+    assert!(h.exists(VIBE310_CHILD));
+    assert_eq!(h.links(VIBE310), vec![None]);
 }
 
 #[test]

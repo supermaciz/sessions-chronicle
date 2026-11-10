@@ -63,10 +63,17 @@ now hashes `parent_session_id \0 action_id \0 admission_sequence` (still
 reuse a call ID in a later turn. The child's `session_metadata.subagent_spawn_key`
 is still the spawn `action_id`
 ([`_controller.py`](https://github.com/mistralai/mistral-vibe/blob/v3.1.0/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_subagents/_controller.py)), and the
-admission sequence is not stored in the child's own metadata. The reader on
-`main` still derives `child-` from `parent \0 action_id` and rejects any
-mismatch as `IdentityConflict`, so **subagent sessions written by Vibe ≥ 3.1.0
-are not indexed** (root sessions are unaffected) until the parser is updated.
+admission sequence is not stored in the child's own metadata. The reader
+therefore no longer re-derives a child's ID: it accepts a subagent child after
+validating its store identity and parent metadata, and keeps its
+`subagent_spawn_key` (stored as `sessions.agent_path`). The indexer links a
+parent spawn effect to a child only when the effect's `childSessionId` names
+it, the child declares that parent, **and** the child's spawn key equals the
+effect's spawn `action_id` (`subagents.parser_ref`). Legacy effects without
+`childSessionId` keep the pre-3.1.0 derived-ID fallback. A child directory that
+no spawn effect claims is still indexed as a subagent of its declared parent,
+but stays unlinked. The 3.1.0 regression store is
+`tests/fixtures/vibe_unified_variants/vibe-310/`.
 Other 3.1.0 store changes: the depth-one ownership check was dropped from
 `SubagentSessionIdentity` (`ChildSessionRecord.depth` is still `Literal[1]`);
 `ChildSessionRecord` / `SpawnInput` gain an optional `instructions`; canonical
@@ -264,7 +271,7 @@ The implementation follows pinned upstream facts **E–K** in
 validation and chaining; F, projection replay operations and watermarks; G,
 snapshot envelope; H, entry shapes; I, skill invocation display; J,
 deterministic child identity (`sha256(parent \0 action_id)` through v3.0.4;
-v3.1.0 adds `\0 admission_sequence`, not yet handled — see the 2026-11-09
+v3.1.0 adds `\0 admission_sequence`, supported through explicit child IDs — see the 2026-11-09
 format-watch note above); K, offloaded large tool-result resolution.
 `checkpoint.json` is not read. Neither are `scheduled-loops.json`, the sibling
 `.session-index.json` catalog, or `scratchpad/`.
@@ -278,6 +285,13 @@ that evidence exists. Ancestry/cleanup is scoped to verified candidates and
 owned Unified rows in the same source root; legacy nested-child behavior is
 unchanged. Unknown minor-9 state variants (including `pending` effect states)
 are unsupported rather than presented as successful activity.
+
+Projection history entries are `message`, `reasoning`, `effect`, `checkpoint`,
+`notice`, and `callback`; any other type is unsupported. `notice` and
+`callback` entries are skipped. A `callback` entry is a settled question that
+Vibe keeps in history (`detail.kind` `user_input`, `state.status` `answered`).
+Its question and answer already reach the transcript through the related
+`ask_user_question` tool call effect.
 
 #### Reader Semantic Version and Incremental Invalidation
 
@@ -310,7 +324,7 @@ Keep these version domains separate:
 | Version | Purpose |
 |---|---|
 | Vibe `store_format` / `store_format_minor` (reader accepts 9 and 10; 8 and 11+ rejected) | Which upstream on-disk format the reader accepts. |
-| `UNIFIED_READER_VERSION` (currently 2) | Whether a prior successful Unified read may still be skipped. |
+| `UNIFIED_READER_VERSION` (currently 5) | Whether a prior successful Unified read may still be skipped. |
 | SQLite schema version | Structure of Sessions Chronicle's index database; changing reader semantics alone does not require a schema migration. |
 
 ---

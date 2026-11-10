@@ -24,10 +24,10 @@ use crate::parsers::{ParsedSession, PendingReasoning, extract_first_prompt};
 use super::effects;
 use super::error::UnifiedError;
 use super::saved_results::SavedResultResolver;
-use super::store::{Identity, LoadedStore, child_session_id, reject_symlink};
+use super::store::{Identity, LoadedStore, reject_symlink};
 
 /// Parser for Mistral Vibe Unified session stores
-/// (`<vibe-root>/unified/<id>/`, Vibe 3.0.x).
+/// (`<vibe-root>/unified/<id>/`, Vibe 3.x).
 pub struct MistralVibeUnifiedParser;
 
 impl MistralVibeUnifiedParser {
@@ -146,21 +146,16 @@ pub(crate) fn convert(
         )
     });
 
-    // Only subagent identities are children; forks stay top-level.  Fact
-    // J self-verification: a child's session id must derive from its
-    // parent id and spawn key, so a forged or stale child directory is an
-    // identity conflict.
-    let (parent_session_id, is_subagent) = match &store.runtime.identity {
+    // Only subagent identities are children; forks stay top-level. Vibe
+    // 3.1.0 adds an admission sequence to child IDs but does not persist it
+    // in the child metadata, so the ID cannot be re-derived here. The spawn
+    // key (the spawn action ID) is kept instead: the indexer only links a
+    // child to the parent effect whose action ID equals it.
+    let (parent_session_id, is_subagent, spawn_key) = match &store.runtime.identity {
         Identity::Subagent { parent, spawn_key } => {
-            let derived = child_session_id(parent, spawn_key);
-            if derived != session_id {
-                return Err(UnifiedError::IdentityConflict(format!(
-                    "subagent session id {session_id} does not match the child id {derived} derived from parent {parent} and spawn key {spawn_key}"
-                )));
-            }
-            (Some(parent.clone()), true)
+            (Some(parent.clone()), true, Some(spawn_key.clone()))
         }
-        Identity::Root | Identity::Fork => (None, false),
+        Identity::Root | Identity::Fork => (None, false, None),
     };
 
     // Model attribution (fact H): once any model_change checkpoint exists,
@@ -312,7 +307,10 @@ pub(crate) fn convert(
                     }
                 }
             }
-            "notice" => {}
+            // A settled callback (an answered question) is kept in history;
+            // its question and answer already reach the transcript through
+            // the related `ask_user_question` effect.
+            "notice" | "callback" => {}
             other => {
                 return Err(UnifiedError::Unsupported(format!("entry type {other:?}")));
             }
@@ -363,7 +361,7 @@ pub(crate) fn convert(
         transcript_items,
         reasoning_attachments,
         token_usage,
-        agent_path: None,
+        agent_path: spawn_key,
         context_entries: Vec::new(),
     })
 }
@@ -1037,6 +1035,29 @@ mod tests {
         );
         assert_eq!(parsed.subagents.len(), 1);
         assert_eq!(parsed.subagents[0].source_model.as_deref(), Some("m-one"));
+    }
+
+    #[test]
+    fn settled_callback_entries_are_skipped() {
+        // Vibe keeps an answered `ask_user_question` in the projection as a
+        // `callback` entry; its question and answer already reach the
+        // transcript through the related tool call effect.
+        let callback = json!({
+            "type":"callback", "id":"user-input-q1", "callbackId":"user-input-q1",
+            "turnId":"t1", "createdAt":T0_MS, "updatedAt":T0_MS,
+            "generationStatus":"completed", "relatedEntryId":"q1",
+            "title":"User input required",
+            "detail":{"kind":"user_input", "relatedEntryId":"q1", "request":{"questions":[]}},
+            "state":{"status":"answered", "output":{"type":"user_input", "result":{"answers":[], "cancelled":false}}}
+        });
+        let parsed = convert_entries(vec![
+            user_message("u1", json!([{"type":"text", "text":"Hi"}])),
+            callback,
+            model_effect("e1", false),
+        ])
+        .unwrap();
+        assert_eq!(parsed.messages.len(), 1);
+        assert_eq!(parsed.tool_calls.len(), 1);
     }
 
     #[test]

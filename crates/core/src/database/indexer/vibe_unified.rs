@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 use super::{IndexingStats, SessionIndexer, push_indexing_error};
 use crate::models::{AiAssistant, IndexingError};
 use crate::parsers::mistral_vibe_unified::{
-    MistralVibeUnifiedParser, UnifiedError, UnifiedParse, UnifiedSignature, child_session_id,
-    is_unified_session_dir,
+    MistralVibeUnifiedParser, UnifiedError, UnifiedParse, UnifiedSignature, is_unified_session_dir,
 };
 use anyhow::Result;
 use rusqlite::OptionalExtension;
@@ -414,6 +413,12 @@ impl SessionIndexer {
         if !is_unified_session_dir(Path::new(&parsed.session.file_path)) {
             return Ok(());
         }
+        // Replacing a child's metadata can invalidate links from its former
+        // parent as well as the current one. Rebuild links in this transaction.
+        tx.execute(
+            "UPDATE subagents SET child_session_id=NULL WHERE child_session_id=?1",
+            [&parsed.session.id],
+        )?;
         let parent = if parsed.session.is_subagent {
             let Some(parent) = parsed.session.parent_session_id.as_deref() else {
                 return Ok(());
@@ -422,20 +427,25 @@ impl SessionIndexer {
         } else {
             &parsed.session.id
         };
-        let mut stmt = tx.prepare("SELECT subagents.id, subagents.agent_id, subagents.parser_ref, child.file_path FROM subagents JOIN sessions parent ON parent.id=subagents.session_id JOIN sessions child ON child.id=subagents.agent_id WHERE parent.id=?1 AND parent.is_subagent=0 AND parent.tool='mistral_vibe' AND child.tool='mistral_vibe' AND child.is_subagent=1 AND child.parent_session_id=parent.id")?;
+        tx.execute(
+            "UPDATE subagents SET child_session_id=NULL WHERE session_id=?1",
+            [parent],
+        )?;
+        let mut stmt = tx.prepare("SELECT subagents.id, subagents.agent_id, child.file_path FROM subagents JOIN sessions parent ON parent.id=subagents.session_id JOIN sessions child ON child.id=subagents.agent_id WHERE parent.id=?1 AND parent.is_subagent=0 AND parent.tool='mistral_vibe' AND child.tool='mistral_vibe' AND child.is_subagent=1 AND child.parent_session_id=parent.id AND child.agent_path=subagents.parser_ref")?;
         let rows = stmt.query_map([parent], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, String>(3)?,
+                r.get::<_, String>(2)?,
             ))
         })?;
         for row in rows {
-            let (effect, child, action, file_path) = row?;
-            if action.is_some_and(|action| child_session_id(parent, &action) == child)
-                && is_unified_session_dir(Path::new(&file_path))
-            {
+            let (effect, child, file_path) = row?;
+            // Ownership evidence: the child declares this parent and its spawn
+            // key (stored as `agent_path`) equals the effect's spawn action ID.
+            // Vibe 3.1.0 child IDs include an admission sequence absent from
+            // child metadata, so the ID itself is not re-derived.
+            if is_unified_session_dir(Path::new(&file_path)) {
                 tx.execute(
                     "UPDATE subagents SET child_session_id=?1 WHERE id=?2",
                     rusqlite::params![child, effect],
