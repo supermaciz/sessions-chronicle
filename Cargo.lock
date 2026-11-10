@@ -1658,7 +1658,7 @@ dependencies = [
 
 [[package]]
 name = "sessions-chronicle"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "sessions-chronicle-core"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1702,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "sessions-chronicle-search-provider"
-version = "0.11.2"
+version = "0.11.3"
 dependencies = [
  "anyhow",
  "async-channel",

@@ -49,6 +49,16 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.11.3" date="2026-11-10">
+      <description>
+        <p>Improves Mistral Vibe compatibility and adds model attribution for tool calls and subagents.</p>
+        <ul>
+          <li>Fix indexing of Mistral Vibe 3.1.0 subagent sessions</li>
+          <li>Store model attribution for tool calls and subagents</li>
+          <li>Update dependencies (rusqlite 0.41, sha2 0.11, similar)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.11.2" date="2026-11-05">
       <description>
         <p>A patch release extending Mistral Vibe unified session support.</p>
