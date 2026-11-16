@@ -74,6 +74,17 @@ Confirmed on 2026-10-14 from upstream `dev`
 > `codemode_vm`) whose flags are **on by default in `local` / `dev` builds**
 > and off in releases; `media_blob` now also moves tool-part file references
 > into `blob`/`blob_ref`. `part_rows` is not in that registry yet.
+>
+> **Format watch 2026-11-16 (`dev` `0354362b8`, tags v2.2.7 and
+> [v2.3.0](https://github.com/anomalyco/opencode/releases/tag/v2.3.0), 2026-11-13):** no new
+> migration (latest still `20261030054400_job`) and no change to
+> `session/sql.ts`. `session-message.ts` adds an optional assistant
+> `time.firstToken` ([#63321](https://github.com/anomalyco/opencode/commit/99f2bea6d)).
+> `experimental.part_rows` is still opt-in and off by default. The flag registry
+> drops `codemode_vm` ([#62642](https://github.com/anomalyco/opencode/commit/72616be4d); the
+> config key is kept as a deprecated no-op) and adds `console_watches` and
+> `mcp_events`. npm `opencode-ai` latest is still 1.19.5. No impact on the V2
+> reader.
 
 ### Schema
 

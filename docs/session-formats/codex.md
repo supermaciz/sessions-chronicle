@@ -54,6 +54,25 @@ persisted in
 [`policy.rs`](https://github.com/openai/codex/blob/rust-v0.167.0/codex-rs/rollout/src/policy.rs).
 Paths and file naming unchanged; the parser does not read audio content.
 
+**Format watch 2026-11-16: stable `rust-v0.169.0`**
+([release](https://github.com/openai/codex/releases/tag/rust-v0.169.0), 2026-11-13 UTC; 0.168.0 on
+2026-11-12; `main` `98e1584a`; npm latest 0.169.0 / alpha 0.171.0-alpha.7).
+`policy.rs`, `RolloutItem` and `EventMsg` are unchanged since 0.167.0.
+`TurnContextItem` no longer serializes `sandbox_policy` or
+`file_system_sandbox_policy`: `permission_profile` becomes **required** and
+older lines are normalized into it on read
+([#59963](https://github.com/openai/codex/commit/2889d8e1b),
+[`protocol.rs`](https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/protocol/src/protocol.rs));
+`TurnContextItem` also gains optional `direct_only_tool_namespaces`.
+`SessionMeta` gains `account_scoped` (omitted when `false`), and
+`window_id` is now a transparent `ContextWindowId` newtype (same JSON string).
+`FunctionCallOutputContentItem::InputAudio` follows the 0.167.0 `ContentItem`
+change (`audio_url` or `file_id`). The parser only reads
+`turn_context.payload.model`, so none of this affects parsing; the
+`turn_context` example below still shows the pre-0.169.0 `sandbox_policy`
+shape. Unreleased on `main`: response item `id`s go through a typed
+`OptionalWireItemId` serializer (wire shape not yet verified).
+
 **Desktop/import watch: 2026-10-04; documented 2026-10-11.** The focused
 check below does not refresh the protocol comparison above.
 

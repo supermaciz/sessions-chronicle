@@ -65,6 +65,23 @@ Unreleased on `main`: the wire metadata header gains
 `min_protocol_version: "1.5"` (`wire-manifest.d.ts`); the parser does not
 read header protocol fields.
 
+**Format watch 2026-11-16 (2.6.2 + main `6e35efa9`):** npm latest
+[2.6.2](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) (2.6.0 on
+2026-11-12, 2.6.2 on 2026-11-13; canary 2.7.0). `WIRE_PROTOCOL_VERSION` still
+`'1.5'`, `min_protocol_version: "1.5"` now released. The port of the agent loop
+runtime ([#4630](https://github.com/MoonshotAI/kimi-code/pull/4630)) changes the persisted
+record set from 69 to **67** types (`wire-manifest.d.ts`): `+interruptionReminder.requested`,
+`-task.waitDelivered`, `-turn.step.interrupted`, `-turn.step.retrying`;
+`turn.prompt` gains optional `trigger` (`normal` / `notify` / `continue`). The
+`context.append_loop_event` events (`step.begin`, `step.end`, `content.part`,
+`tool.call`, `tool.result`), `state.json` metadata contract and storage paths
+are unchanged; the parser reads none of the removed types. Unreleased on
+`main` ([#4754](https://github.com/MoonshotAI/kimi-code/pull/4754), experimental next-prompt
+suggestions): `llm.request.kind` gains `prediction` and `usage.record.usageScope`
+gains `prediction`. The parser takes the model of every `llm.request` and sums
+every `usage.record`, so prediction requests could leak into step models or
+token totals once released (likely, not reproduced).
+
 ---
 
 ## Storage & File Naming
