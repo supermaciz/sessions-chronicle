@@ -84,6 +84,22 @@ document over its raw bytes; settled runtime Actions (now including `process`)
 are released whole instead of having their bodies pruned — the reader does not
 read `actions`.
 
+**Format watch 2026-11-16:** `main` / tag
+[v3.1.2](https://github.com/mistralai/mistral-vibe/releases/tag/v3.1.2) (`b20313e0`, 2026-11-10;
+v3.1.1 on 2026-11-09), PyPI `mistral-vibe` 3.1.2. `STORE_FORMAT_MINOR` is still
+**10** and `_subagents/_operations.py` is unchanged, so the 3.1.0 child-ID
+derivation handled by #225 still applies. Projection entry types, checkpoint
+kinds and effect `detail.kind` values written by `_projection.py` are
+unchanged. New in v3.1.1: `pre_agent` hooks can rewrite or skip a user
+message. The projection stores the user's original text (hook-added blocks are
+dropped), and a user message whose turn a hook skipped is settled with
+`outcome: {"type": "discarded", "cause": "skipped"}`
+([`_projection.py`](https://github.com/mistralai/mistral-vibe/blob/v3.1.2/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_projection.py)).
+User messages previously carried no `outcome`. The reader only checks
+`outcome` on assistant and reasoning entries, so this does not break parsing,
+but a skipped prompt is shown as a normal user message (likely, not
+reproduced). The legacy `SessionMetadata` gains an optional `worktrees` list.
+
 ### Storage & File Naming
 
 | Field   | Value |

@@ -607,6 +607,23 @@ capture). No documented path, file-naming or JSONL field change:
   and report their result later; the resulting transcript records are not yet
   captured locally (likely a deferred tool result).
 
+Added by the 2026-11-16 format-watch pass (changelog v2.1.321–v2.1.325, npm
+latest/next 2.1.325, stable 2.1.311, Agent SDK 0.3.325; no fresh local
+capture). No documented path, file-naming or JSONL field change:
+
+- v2.1.323: experimental, opt-in
+  [Code Mode](https://code.claude.com/docs/en/code-mode)
+  (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, interactive terminal sessions
+  only): Claude writes JavaScript that a `REPL` tool runs (`tool_input.code`),
+  and that code makes the tool calls. How the inner calls are recorded in the
+  JSONL (as ordinary `tool_use` / `tool_result` pairs or only inside the
+  `REPL` result) is not yet captured.
+- v2.1.323: fixed subagent transcripts and large tool results being saved apart
+  from the session's transcript after entering a hook-created or nested-repo
+  worktree.
+- v2.1.325: fixed recent turns sometimes missing from a resumed session after
+  an unclean exit.
+
 ### Meta Flag
 
 - `isMeta: true` → Skip for title extraction (system-generated)
