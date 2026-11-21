@@ -563,6 +563,80 @@ optional GNOME top-bar extension, and an Android companion.
 - **Maintenance signal:** 1 star, pushed on 2026-11-19. Created in October
   2026; very early, listed only because it shares our platform.
 
+### [Recall](https://github.com/samzong/Recall)
+
+Rust CLI/TUI that syncs local Claude Code, Codex, OpenCode, Antigravity, and
+other sessions into one index with full-text and semantic search, usage
+tracking, JSONL export/import, and resume back into the original CLI.
+
+- **Why it's adjacent:** Same "one local index across assistants" premise,
+  with search, export, and resume.
+- **Why it is not a direct match:** Terminal-first power-user tool in the cass
+  mold rather than a native desktop reading experience.
+- **Maintenance signal:** 109 stars, v0.7.0 released on 2026-11-08, last commit
+  on 2026-11-19.
+
+### [sessions](https://github.com/nicknisi/sessions)
+
+TypeScript CLI that builds a full-text index over Claude Code, Codex, Pi, and
+OpenCode sessions, with fuzzy find and resume (or fork) from the terminal, an
+MCP server that gives agents recall of past work, and token/cost usage reports.
+
+- **Why it's adjacent:** Multi-assistant local search and resume over the same
+  stores.
+- **Why it is not a direct match:** CLI plus agent memory; no transcript
+  reading UI.
+- **Maintenance signal:** 52 stars, v1.34.1 released on 2026-11-16, last commit
+  on 2026-11-16.
+
+### [agf](https://github.com/subinium/agf)
+
+Rust TUI for finding and resuming local sessions from 16 terminal agents,
+including Claude Code, Codex, Antigravity, Grok Build, Kimi Code, Qwen Code,
+Gemini, and Cursor CLI, with JSON commands and an MCP server.
+
+- **Why it's adjacent:** Broad multi-assistant session discovery and search.
+- **Why it is not a direct match:** Optimized for "find and resume in a
+  keystroke", not for reading or reviewing what happened.
+- **Maintenance signal:** 164 stars, v0.15.1 released on 2026-09-08, last commit
+  on 2026-10-01.
+
+### [claude-history](https://github.com/raine/claude-history)
+
+Rust TUI and CLI history browser for Claude Code that, despite its name, also
+supports Codex, Pi, and Oh My Pi. Offers fuzzy and semantic search, a
+vim-style conversation viewer, export, and resume/fork from the TUI.
+
+- **Why it's adjacent:** Search plus a real conversation viewer over the same
+  local transcripts.
+- **Why it is not a direct match:** Terminal UI with narrower assistant
+  coverage; no native desktop app.
+- **Maintenance signal:** 544 stars, v0.1.83 released on 2026-11-04, last commit
+  on 2026-11-04.
+
+### [agenttrace](https://github.com/luoyuctl/agenttrace)
+
+Rust TUI and report generator that reads sessions from Claude Code, Codex CLI,
+Qwen Code, Cline, Aider, Cursor exports, OpenCode, Pi, and others, and ranks
+them by cost, duration, health, failures, and anomalies to diagnose slow or
+expensive runs.
+
+- **Why it's adjacent:** Same local session history, analyzed per session.
+- **Why it is not a direct match:** Cost and health auditing rather than
+  reading; sits with the trace/observability tools.
+- **Maintenance signal:** 157 stars, v0.10.1 released on 2026-10-05, last commit
+  on 2026-10-06.
+
+### [Cursor Chat Browser](https://github.com/thomas-pedersen/cursor-chat-browser)
+
+TypeScript web app for browsing, full-text searching, and exporting Cursor
+editor chat and composer history from Cursor's workspace and global storage.
+
+- **Why it's adjacent:** Local browse/search/export of AI coding conversations.
+- **Why it is not a direct match:** Cursor-only web app; covers the IDE chat
+  store rather than terminal agents.
+- **Maintenance signal:** 516 stars, no releases, last commit on 2026-08-23.
+
 ### [cli-continues](https://github.com/yigitkonur/cli-continues)
 
 TypeScript CLI for resuming any AI coding session in another tool, including
@@ -710,7 +784,9 @@ category by itself. Competitors now cluster into a handful of shapes:
   on GNOME/Linux.
 - **Operational control planes:** CC Switch, Nimbalyst, CCManager.
 - **Trace/observability viewers:** claude-tap, ai-observer, agents-observe,
-  abtop, and similar proxy/logging/monitoring tools.
+  abtop, agenttrace, and similar proxy/logging/monitoring tools.
+- **Terminal search-and-resume tools:** cass, Recall, agf, claude-history, and
+  sessions.
 - **Context feeders:** claude-historian-mcp, SpecStory, ctx, deja-vu, and other
   tools that turn history into assistant-readable context.
 - **Visualization-first tools:** Mindwalk, Agent Flow, zoetrope, ClaudeScope,
