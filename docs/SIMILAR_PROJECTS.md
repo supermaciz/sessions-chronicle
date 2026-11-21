@@ -14,6 +14,8 @@ Projects listed here should be:
 - publicly available (open source, source-available, or public marketplace)
 - visibly active or still strategically relevant as of 2026-11-21
 - not archived
+- with a commit or release in the six months before the review (projects
+  that fall short move to "Projects removed from the main list")
 
 For this document, "actively maintained" means there was visible recent
 repository or marketplace activity on GitHub, GitHub Releases, a product site,
@@ -638,17 +640,6 @@ editor chat and composer history from Cursor's workspace and global storage.
   store rather than terminal agents.
 - **Maintenance signal:** 516 stars, no releases, last commit on 2026-08-23.
 
-### [cli-continues](https://github.com/yigitkonur/cli-continues)
-
-TypeScript CLI for resuming any AI coding session in another tool, including
-Claude Code, Copilot, Gemini, Codex, and Cursor.
-
-- **Why it's adjacent:** Attacks session continuity and cross-tool handoff.
-- **Why it is not a direct match:** Not a history browser or analytics surface.
-- **Maintenance signal:** 1,609 stars, no releases, last commit on 2026-05-07
-  (which removed CI configs). No visible activity for six months; flagged as
-  possibly dormant.
-
 ### [claude-historian-mcp](https://github.com/Vvkmnn/claude-historian-mcp)
 
 TypeScript MCP server for searching and retrieving Claude Code conversation
@@ -697,17 +688,6 @@ Go local web app for exploring Claude Code history locally.
 - **Maintenance signal:** 33 stars, v2.3.2 released on 2026-11-15, pushed on
   2026-11-15.
 
-### [Chronicle / claude-history-manager](https://github.com/josephyaduvanshi/claude-history-manager)
-
-Native macOS browser for Claude Code session history with search, pins, tags,
-resume, and local transcripts.
-
-- **Why it's adjacent:** Native desktop session browser with local storage,
-  search, and resume.
-- **Why it is not a direct match:** Claude Code-only and macOS-only.
-- **Maintenance signal:** 48 stars, v0.3.0 released on 2026-04-26, no commit
-  since 2026-04-26. Flagged as possibly dormant.
-
 ### [session-graph](https://github.com/robertoshimizu/session-graph)
 
 Python tool that converts scattered AI coding sessions into a queryable
@@ -748,6 +728,19 @@ agents, interactive session management, and secure background agents.
 These appeared in earlier versions of this document but are no longer in the
 main shortlist because they are either less directly comparable, lower signal,
 or no longer show clear current momentum.
+
+### [cli-continues](https://github.com/yigitkonur/cli-continues)
+
+TypeScript CLI for resuming an AI coding session in another tool (Claude Code,
+Copilot, Gemini, Codex, Cursor). Removed in the 2026-11-21 review: no commit or
+release in the last six months (last commit on 2026-05-07, which removed its CI
+configs; 1,609 stars).
+
+### [Chronicle / claude-history-manager](https://github.com/josephyaduvanshi/claude-history-manager)
+
+Native macOS browser for Claude Code session history. Removed in the 2026-11-21
+review: no commit or release in the last six months (v0.3.0 and last commit on
+2026-04-26; 48 stars).
 
 ### [CodMate](https://github.com/loocor/codmate)
 
