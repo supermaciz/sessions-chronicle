@@ -55,9 +55,10 @@ Renamed from Claude Code History Viewer (`jhlee0409/claude-code-history-viewer`
 now redirects here); v2.0.0 shipped on 2026-11-19. It positions itself as an
 offline history viewer for AI coding assistants and now lists 33 history
 sources, including Claude Code, Codex CLI, GitHub Copilot, Gemini CLI, Cursor,
-OpenCode, Aider, Cline, Goose, Kimi, Mistral Vibe, Qwen Code, and Zed. It emphasizes offline browsing, search,
-conversation branches, tool-call and file-edit inspection, token and cost
-analytics, and an optional server mode. Documents a Flatpak for Linux.
+OpenCode, Aider, Cline, Goose, Kimi, Mistral Vibe, Qwen Code, and Zed. It
+emphasizes offline browsing, search, conversation branches, tool-call and
+file-edit inspection, token and cost analytics, and an optional server mode.
+Documents a Flatpak for Linux.
 
 - **Why it's similar:** Local-first session viewer with Rust-backed desktop
   packaging, multi-assistant support, transcript search, and analytics.
