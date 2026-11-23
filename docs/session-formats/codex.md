@@ -73,6 +73,21 @@ change (`audio_url` or `file_id`). The parser only reads
 shape. Unreleased on `main`: response item `id`s go through a typed
 `OptionalWireItemId` serializer (wire shape not yet verified).
 
+**Format watch 2026-11-23: stable `rust-v0.171.0`**
+([release](https://github.com/openai/codex/releases/tag/rust-v0.171.0), 2026-11-19; `main`
+`a1604a8c0`; npm latest 0.171.0 / alpha 0.173.0-alpha.4). The persisted
+`RolloutItem` set (13 variants in `codex-rs/history/src/rollout_payload.rs`),
+`policy.rs` persistence rules, paths and file naming are unchanged. The
+`OptionalWireItemId` serializer, now released, writes a plain string or
+`null` ([`response_item_id.rs`](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/protocol/src/response_item_id.rs)),
+so `id` keeps its JSON shape. `response_item` and `inter_agent_communication`
+payloads gain an optional flattened `id_allocation` (replay ordinals), and the
+harness `metadata` gains optional `image_replay_sources`,
+`retain_across_windows`, `tool_audio_budget_applied` and
+`model_search_state`
+([`history/src/lib.rs`](https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/history/src/lib.rs)).
+All additive; the parser reads none of them.
+
 **Desktop/import watch: 2026-10-04; documented 2026-10-11.** The focused
 check below does not refresh the protocol comparison above.
 

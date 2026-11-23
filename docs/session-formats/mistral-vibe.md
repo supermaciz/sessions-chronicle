@@ -100,6 +100,31 @@ User messages previously carried no `outcome`. The reader only checks
 but a skipped prompt is shown as a normal user message (likely, not
 reproduced). The legacy `SessionMetadata` gains an optional `worktrees` list.
 
+**Format watch 2026-11-23 — new checkpoint kind breaks the reader:** `main` /
+tag [v3.1.4](https://github.com/mistralai/mistral-vibe/releases/tag/v3.1.4) (`e76235b2`,
+2026-11-20; v3.1.3 on 2026-11-17), PyPI `mistral-vibe` 3.1.4.
+`STORE_FORMAT_MINOR` is still **10**, journal record types and
+`_subagents/_operations.py` are unchanged. **v3.1.4 adds the projection
+checkpoint kind `resumed`**: when a restarted process carries on a turn that a
+quit or crash cut (`_runtime.py::_mark_resumed_turn`), `_projection.py`
+appends `{"type": "checkpoint", "kind": "resumed", "id":
+"checkpoint-resumed-<n>", "message": "Resumed after a restart", "details": {}}`
+([`_projection.py`](https://github.com/mistralai/mistral-vibe/blob/v3.1.4/harness/runtimes/python/python/mistralai_vibe_local_harness/vibe/_projection.py)).
+The 3.1.4 changelog makes this a common path: quitting with Ctrl+D or `/exit`
+while the agent replies no longer ends the turn, and resuming carries it on.
+The reader treats checkpoint `kind` as a closed variant
+(`model_change`, `agent_change`, `compaction`, `recovered`), so such a session
+fails with `UnifiedError::Unsupported("checkpoint kind \"resumed\"")` and is
+not indexed (confirmed against the reader on `main` with an entry built from
+the upstream shape). Other 3.1.3/3.1.4 changes are additive for the reader:
+effect entries gain `toolCallId`; a turn whose model call a `pre_llm_call`
+hook skipped keeps its user message; model inputs are no longer stored in
+journalled transitions or completion intents; the store gains Session API
+facts in a compact form (`SparseHistoryPositionsV1`), which the reader does
+not read. v3.1.4 also makes the Session API engine the default for local
+sessions (`experimental_local_runtime_session_api = false` reverts). The legacy
+`SessionMetadata` gains optional `runtime`, `owed_replies` and `skill_pins`.
+
 ### Storage & File Naming
 
 | Field   | Value |
