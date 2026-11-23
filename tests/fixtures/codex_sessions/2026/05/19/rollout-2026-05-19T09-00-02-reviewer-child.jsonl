@@ -1,0 +1,4 @@
+{"type":"session_meta","timestamp":"2026-05-19T09:00:02Z","payload":{"id":"019e3d94-0000-7000-8000-000000000002","timestamp":"2026-05-19T09:00:02Z","cwd":"/tmp/codex-resume","source":{"sub_agent":{"thread_spawn":{"parent_thread_id":"019e3d94-0000-7000-8000-000000000001"}}}}}
+{"timestamp":"2026-05-19T09:00:03Z","type":"turn_context","payload":{"cwd":"/tmp/codex-resume","approval_policy":"on-request","permission_profile":{"name":"read-only"},"model":"gpt-5.5-codex-mini","summary":"auto"}}
+{"timestamp":"2026-05-19T09:00:04Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"call_review","arguments":"{\"cmd\":\"git diff\"}"}}
+{"timestamp":"2026-05-19T09:00:05Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_review","output":"Process exited with code 0"}}

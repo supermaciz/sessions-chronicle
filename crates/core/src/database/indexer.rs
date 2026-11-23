@@ -3591,13 +3591,85 @@ mod tests {
     }
 
     #[test]
+    fn model_fixture_november_first_mini_is_inside_tool_burst() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        indexer
+            .index_codex_sessions(&crate::fixture_path("codex_sessions"))
+            .unwrap();
+        let session = "00000000-0000-7000-8000-000000000169";
+        let models = crate::database::load_session_models(temp_db.path(), session).unwrap();
+        let mini = models
+            .models
+            .iter()
+            .find(|m| m.model == "gpt-5.5-codex-mini")
+            .unwrap();
+        let rows: Vec<(i64, String, Option<String>)> = indexer
+            .db
+            .prepare(
+                "SELECT ti.item_index, ti.kind, tc.model FROM transcript_items ti
+             LEFT JOIN tool_calls tc ON tc.session_id = ti.session_id AND tc.id = ti.tool_call_id
+             WHERE ti.session_id = ?1 ORDER BY ti.item_index",
+            )
+            .unwrap()
+            .query_map([session], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let pos = rows
+            .iter()
+            .position(|r| r.0 == mini.first_item_index)
+            .unwrap();
+        assert_eq!(
+            rows[pos].1, "tool_call",
+            "first mini entry must be a tool call"
+        );
+        assert_eq!(rows[pos].2.as_deref(), Some("gpt-5.5-codex-mini"));
+        assert!(
+            pos > 0 && rows[pos - 1].1 == "tool_call",
+            "mini call must follow another call in the burst"
+        );
+    }
+
+    #[test]
+    fn model_fixture_linked_reviewer_child_has_only_tool_calls() {
+        let temp_db = NamedTempFile::new().unwrap();
+        let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
+        indexer
+            .index_codex_sessions(&crate::fixture_path("codex_sessions"))
+            .unwrap();
+        let child: String = indexer.db.query_row(
+            "SELECT child_session_id FROM subagents WHERE session_id = ?1 AND child_session_id IS NOT NULL",
+            ["019e3d94-0000-7000-8000-000000000001"], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(child, "019e3d94-0000-7000-8000-000000000002");
+        let models = crate::database::load_session_models(temp_db.path(), &child).unwrap();
+        assert_eq!(
+            models.models.len(),
+            1,
+            "linked child must be indexed with one model"
+        );
+        assert_eq!(models.models[0].model, "gpt-5.5-codex-mini");
+        assert_eq!(models.unattributed_count, 0);
+        let (total, calls): (i64, i64) = indexer.db.query_row(
+            "SELECT COUNT(*), COUNT(CASE WHEN ti.kind = 'tool_call' THEN 1 END)
+             FROM transcript_items ti
+             LEFT JOIN messages m ON m.session_id = ti.session_id AND m.message_index = ti.message_index
+             WHERE ti.session_id = ?1 AND (ti.kind IN ('tool_call', 'subagent') OR (ti.kind = 'message' AND m.role = 'assistant'))",
+            [&child], |r| Ok((r.get(0)?, r.get(1)?))
+        ).unwrap();
+        assert!(total > 0);
+        assert_eq!(total, calls);
+    }
+
+    #[test]
     fn codex_indexing_indexes_sessions() {
         let temp_db = NamedTempFile::new().unwrap();
         let mut indexer = SessionIndexer::new(temp_db.path()).unwrap();
         let sessions_dir = crate::fixture_path("codex_sessions");
 
         let count = indexer.index_codex_sessions(&sessions_dir).unwrap();
-        assert_eq!(count, 6);
+        assert_eq!(count, 7);
 
         let sessions: Vec<(String, String)> = indexer
             .db
@@ -3608,7 +3680,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        assert_eq!(sessions.len(), 6);
+        assert_eq!(sessions.len(), 7);
         assert!(sessions.iter().all(|(_, tool)| tool == "codex"));
     }
 
