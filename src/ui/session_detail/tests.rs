@@ -1,7 +1,7 @@
 use super::*;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::models::{ContextKind, ContextPreview};
@@ -59,6 +59,54 @@ fn drain_main_context() {
         if !context.iteration(false) {
             break;
         }
+    }
+}
+
+#[derive(Clone, Default)]
+struct ModelSummaryLog(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for ModelSummaryLog {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl ModelSummaryLog {
+    fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        let log = Self::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(move || writer.clone())
+            .finish();
+        (log, tracing::subscriber::set_default(subscriber))
+    }
+
+    fn wait_for(&self, message: &str, request_id: Option<u64>) {
+        let request_field = request_id.map(|id| format!("request_id={id}"));
+        let seen = || {
+            String::from_utf8_lossy(&self.0.lock().unwrap())
+                .lines()
+                .any(|line| {
+                    line.contains(message)
+                        && request_field.as_ref().is_none_or(|field| {
+                            line.split_ascii_whitespace().any(|word| word == field)
+                        })
+                })
+        };
+        pump_main_context(seen);
+        assert!(
+            seen(),
+            "did not process the expected event: {message} {request_field:?}\n{}",
+            String::from_utf8_lossy(&self.0.lock().unwrap())
+        );
     }
 }
 
@@ -742,6 +790,7 @@ fn model_summary_switch_rejects_late_usage_and_jump_expands_burst() {
             .collect()
     }
 
+    let (log, _trace) = ModelSummaryLog::capture();
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let session_a = build_test_session(None, None, 0, 0, 0);
     let mut session_b = session_a.clone();
@@ -784,8 +833,7 @@ fn model_summary_switch_rejects_late_usage_and_jump_expands_burst() {
     );
     let initial_request = controller.state().get().model.transcript.request_id;
 
-    // Dispatch a real reload of A, but prevent its SQLite read from returning
-    // until B is active. Run the deferred start explicitly to control ordering.
+    // Start a real reload of A, then hold its SQLite read until B is active.
     let writer = Connection::open(temp_db.path()).unwrap();
     writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
     let session_a_id = session_a.id.clone();
@@ -800,10 +848,10 @@ fn model_summary_switch_rejects_late_usage_and_jump_expands_burst() {
         "old jump buttons must be removed"
     );
     let stale_request = controller.state().get().model.transcript.request_id;
-    controller.emit(SessionDetailMsg::StartDeferredFirstPageLoad {
-        request_id: stale_request,
-        session_id: session_a_id,
-    });
+    log.wait_for(
+        "Session detail deferred first page load started",
+        Some(stale_request),
+    );
     controller.emit(SessionDetailMsg::SetSession {
         session: Box::new(session_b.clone()),
         search_query: None,
@@ -841,6 +889,10 @@ fn model_summary_switch_rejects_late_usage_and_jump_expands_burst() {
         }
     });
     writer.execute_batch("COMMIT").unwrap();
+    log.wait_for(
+        &format!("Ignoring stale transcript page for session {session_a_id}"),
+        None,
+    );
     pump_main_context(|| slugs(&rows) == ["opus", "sonnet"]);
     assert_eq!(slugs(&rows), ["opus", "sonnet"]);
     assert!(section.get_visible());
@@ -892,13 +944,72 @@ fn model_summary_switch_rejects_late_usage_and_jump_expands_burst() {
     assert!(!popover.is_visible());
     assert!(target_revealer.reveals_child());
     assert_eq!(controller.state().get().model.search.current_match, 1);
-    assert!(!stale_shown.get());
 
     controller.emit(SessionDetailMsg::Clear);
     pump_main_context(|| controller.state().get().model.session.is_none());
     assert!(!section.get_visible());
     assert!(rows.first_child().is_none());
     window.destroy();
+    assert!(!stale_shown.get());
+}
+
+#[gtk::test]
+fn model_summary_rejects_stale_request_for_active_session() {
+    let (log, _trace) = ModelSummaryLog::capture();
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let session = build_test_session(None, None, 0, 0, 0);
+    seed_model_summary_transcript(temp_db.path(), &session.id, "opus", "sonnet");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    let writer = Connection::open(temp_db.path()).unwrap();
+    writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
+
+    let current_request = || controller.state().get().model.transcript.request_id;
+    let before_load = current_request();
+    let set_session = || {
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(session.clone()),
+            search_query: None,
+        });
+    };
+    set_session();
+    pump_main_context(|| current_request() != before_load);
+    let stale_request = current_request();
+    log.wait_for(
+        "Session detail deferred first page load started",
+        Some(stale_request),
+    );
+
+    // Reopen the same session. The result already in flight will have the
+    // active session ID but an outdated request ID.
+    set_session();
+    pump_main_context(|| current_request() != stale_request);
+    let fresh_request = current_request();
+    assert_ne!(fresh_request, stale_request);
+    let rows = {
+        let parts = controller.state().get();
+        assert_eq!(parts.model.session.as_ref().unwrap().id, session.id);
+        parts.widgets.summary.models_rows.clone()
+    };
+    assert!(rows.first_child().is_none());
+
+    let insertions = Rc::new(Cell::new(0));
+    let row_children = rows.observe_children();
+    row_children.connect_items_changed({
+        let insertions = insertions.clone();
+        move |_, _, _, added| insertions.set(insertions.get() + added)
+    });
+    writer.execute_batch("COMMIT").unwrap();
+    log.wait_for(
+        &format!("Ignoring stale transcript page for session {}", session.id),
+        None,
+    );
+    log.wait_for("Loaded transcript", Some(fresh_request));
+
+    // Both commands have been handled. Only the fresh request may insert
+    // rows, regardless of the order in which the two workers finish.
+    assert_eq!(row_children.n_items(), 2);
+    assert_eq!(insertions.get(), 2);
+    assert_eq!(current_request(), fresh_request);
 }
 
 #[gtk::test]
