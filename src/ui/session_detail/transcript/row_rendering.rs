@@ -5,6 +5,7 @@ use std::{rc::Rc, time::Duration, time::Instant};
 use gtk::prelude::*;
 use relm4::gtk;
 
+use super::model_run_widget::ModelRunWidgets;
 use crate::models::Role;
 use crate::ui::highlight;
 use crate::ui::markdown;
@@ -134,6 +135,9 @@ fn build_tool_call_widget(
     root.add_css_class("tool-call-row");
     root.set_margin_top(2);
     root.set_margin_bottom(2);
+    if let Some(text) = &init.model_run_text {
+        ModelRunWidgets::prepend_to(&root).bind(&root, Some(text));
+    }
 
     let header = build_tool_call_row_header(ToolCallRowHeaderInit {
         tool_name: &init.tool_name,
@@ -384,6 +388,8 @@ mod tests {
         let burst = build_tool_burst_init(
             10,
             vec![ToolCallItemInit {
+                model_run: None,
+                model_run_text: None,
                 item_index: 1,
                 transcript_item_index: 41,
                 session_id: "session-1".to_string(),

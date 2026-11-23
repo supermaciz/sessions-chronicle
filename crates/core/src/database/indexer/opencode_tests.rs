@@ -412,7 +412,7 @@ fn opencode_dropping_one_reader_preserves_shared_snapshot() {
     let writer = create_v1_source(&path, &[("ses_v1", "v1")]);
     writer.pragma_update(None, "journal_mode", "WAL").unwrap();
     let conn = open_read_snapshot(&path).unwrap();
-    let v2 = V2Reader::from_connection(&path, std::rc::Rc::clone(&conn));
+    let v2 = V2Reader::from_connection(&path, std::rc::Rc::clone(&conn)).unwrap();
     let v1 = SqliteBackend::from_connection(&path, conn);
     assert_eq!(v2.list_session_ids().unwrap(), vec!["ses_original"]);
     drop(v1);
@@ -421,7 +421,7 @@ fn opencode_dropping_one_reader_preserves_shared_snapshot() {
     drop(v2);
 
     let conn = open_read_snapshot(&path).unwrap();
-    let v2 = V2Reader::from_connection(&path, std::rc::Rc::clone(&conn));
+    let v2 = V2Reader::from_connection(&path, std::rc::Rc::clone(&conn)).unwrap();
     let v1 = SqliteBackend::from_connection(&path, conn);
     assert_eq!(v1.list_sessions().unwrap().len(), 1);
     drop(v2);
@@ -973,6 +973,114 @@ fn opencode_generation_six_cache_backfills_models_once() {
         .unwrap();
     assert_eq!(model.as_deref(), Some("test/model-a"));
     assert_eq!(pinned_at(&indexer.db, "ses_m"), Some(123));
+    let settled = indexer
+        .index_opencode_sessions_incremental(&json, &[path])
+        .unwrap();
+    assert_eq!(
+        (settled.indexed, settled.skipped, settled.errors),
+        (0, 1, 0)
+    );
+}
+
+#[test]
+fn opencode_projects_split_parts_before_inline_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("opencode.db");
+    let writer = create_v2_source(&path, &[("ses_split", "user prompt")]);
+    writer
+        .execute_batch(
+            r#"CREATE TABLE session_part (
+                message_id TEXT NOT NULL, session_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+                type TEXT NOT NULL, call_id TEXT, time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL, data TEXT NOT NULL,
+                PRIMARY KEY (message_id, ordinal)
+            );
+            CREATE INDEX session_part_session_message_idx
+                ON session_part (session_id, message_id, ordinal);
+            INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data)
+            VALUES
+                ('msg_split', 'ses_split', 'assistant', 2, 1712000000000, 1712000000000,
+                 '{"model":{"id":"split-model"},"content":[]}'),
+                ('msg_mixed', 'ses_split', 'assistant', 3, 1712000000000, 1712000000000,
+                 '{"model":{"id":"mixed-model"},"content":[{"type":"text","text":"inline tail"}]}');
+            INSERT INTO session_part VALUES
+                ('msg_split', 'ses_split', 3, 'text', NULL, 1712000000000, 1712000000000,
+                 '{"type":"text","text":"split second"}'),
+                ('msg_split', 'ses_split', 0, 'text', NULL, 1712000000000, 1712000000000,
+                 '{"type":"text","text":"split first"}'),
+                ('msg_split', 'ses_split', 1, 'text', NULL, 1712000000000, 1712000000000, '{'),
+                ('msg_split', 'ses_split', 2, 'tool', 'call_split', 1712000000000, 1712000000000,
+                 '{"type":"tool","id":"call_split","name":"bash","state":{"status":"completed","input":{},"content":[{"type":"text","text":"done"}]},"time":{"created":1712000000000}}'),
+                ('msg_mixed', 'ses_split', 0, 'text', NULL, 1712000000000, 1712000000000,
+                 '{"type":"text","text":"stored head"}');"#,
+        )
+        .unwrap();
+    drop(writer);
+
+    let (_dir, mut indexer) = new_indexer();
+    let stats = indexer
+        .index_opencode_sessions_incremental(&dir.path().join("missing"), &[path])
+        .unwrap();
+    assert_eq!((stats.indexed, stats.errors), (1, 0));
+    let messages = indexer
+        .db
+        .prepare(
+            "SELECT content, model FROM messages WHERE session_id = 'ses_split' AND role = 'assistant'
+             ORDER BY message_index",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        messages,
+        [
+            ("split first".into(), "split-model".into()),
+            ("split second".into(), "split-model".into()),
+            ("stored head".into(), "mixed-model".into()),
+            ("inline tail".into(), "mixed-model".into()),
+        ]
+    );
+    let tool: (String, String) = indexer
+        .db
+        .query_row(
+            "SELECT output_text, model FROM tool_calls WHERE session_id = 'ses_split' AND id = 'call_split'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(tool, ("done".into(), "split-model".into()));
+}
+
+#[test]
+fn opencode_generation_seven_cache_is_refreshed_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("opencode.db");
+    drop(create_v2_source(&path, &[("ses_refresh", "source prompt")]));
+    let (_cache_dir, mut indexer) = new_indexer();
+    let json = dir.path().join("missing");
+    indexer
+        .index_opencode_sessions_incremental(&json, std::slice::from_ref(&path))
+        .unwrap();
+    indexer
+        .db
+        .execute_batch(
+            "UPDATE opencode_source_fingerprints SET reader_generation = 7;
+             UPDATE messages SET content = 'stale prompt';
+             UPDATE sessions SET pinned_at = 123;",
+        )
+        .unwrap();
+
+    let refreshed = indexer
+        .index_opencode_sessions_incremental(&json, std::slice::from_ref(&path))
+        .unwrap();
+    assert_eq!((refreshed.indexed, refreshed.errors), (1, 0));
+    assert_eq!(
+        cached_body(&indexer.db, "ses_refresh").as_deref(),
+        Some("source prompt")
+    );
+    assert_eq!(pinned_at(&indexer.db, "ses_refresh"), Some(123));
     let settled = indexer
         .index_opencode_sessions_incremental(&json, &[path])
         .unwrap();

@@ -3,6 +3,7 @@ mod context;
 pub mod indexer;
 pub(crate) mod opencode_sources;
 pub mod schema;
+pub mod session_models;
 pub mod shell_search;
 
 use anyhow::{Context, Result};
@@ -21,6 +22,7 @@ use crate::models::{
 pub(crate) use context::insert_context_entry;
 pub use context::load_context_full_content;
 pub use indexer::{IndexingRuntimeState, IndexingStats, SessionIndexer};
+pub use session_models::{SessionModelUsage, SessionModels, load_session_models};
 
 const SQLITE_BUSY_TIMEOUT_SECS: u64 = 5;
 const SESSION_SELECT_COLUMNS: &str =
@@ -53,6 +55,7 @@ pub struct TranscriptItemRow {
     pub model: Option<String>,
     // ToolCall fields
     pub tool_call_id: Option<String>,
+    pub tool_call_model: Option<String>,
     pub tool_name: Option<String>,
     pub tool_status: Option<ToolCallStatus>,
     pub tool_summary: Option<String>,
@@ -61,6 +64,8 @@ pub struct TranscriptItemRow {
     pub duration_ms: Option<i64>,
     // Subagent fields
     pub subagent_id: Option<String>,
+    pub subagent_source_model: Option<String>,
+    pub subagent_child_session_id: Option<String>,
     pub subagent_title: Option<String>,
     #[allow(dead_code)]
     pub subagent_prompt: Option<String>,
@@ -1087,11 +1092,13 @@ pub fn load_transcript_items(
                 COALESCE((ra.has_encrypted_content = 1 AND ra.visible_text IS NULL AND ra.summary_text IS NULL), 0) AS encrypted_only,
                 m.role, substr(m.content, 1, ?2) AS content_preview,
                 length(m.content) AS content_len, m.timestamp, m.model,
-                tc.tool_name, tc.status, tc.summary,
+                tc.tool_name, tc.status, tc.summary, tc.model AS tool_call_model,
                 substr(tc.input_json, 1, 512) AS input_json,
                 substr(tc.output_text, 1, 512) AS output_text,
                 tc.duration_ms,
                 sa.title AS subagent_title, sa.prompt AS subagent_prompt,
+                sa.source_model AS subagent_source_model,
+                sa.child_session_id AS subagent_child_session_id,
                 ctx.kind AS context_kind, ctx.name AS context_name,
                 ctx.timestamp AS context_timestamp
          FROM transcript_items ti
@@ -1124,6 +1131,9 @@ pub fn load_transcript_items(
     let col_content_len = stmt.column_index("content_len")?;
     let col_timestamp = stmt.column_index("timestamp")?;
     let col_model = stmt.column_index("model")?;
+    let col_tool_call_model = stmt.column_index("tool_call_model")?;
+    let col_subagent_source_model = stmt.column_index("subagent_source_model")?;
+    let col_subagent_child_session_id = stmt.column_index("subagent_child_session_id")?;
     let col_tool_name = stmt.column_index("tool_name")?;
     let col_tool_status = stmt.column_index("status")?;
     let col_tool_summary = stmt.column_index("summary")?;
@@ -1173,7 +1183,10 @@ pub fn load_transcript_items(
             },
             message_index: row.get(col_msg_index)?,
             tool_call_id: row.get(col_tool_call_id)?,
+            tool_call_model: row.get(col_tool_call_model)?,
             subagent_id: row.get(col_subagent_id)?,
+            subagent_source_model: row.get(col_subagent_source_model)?,
+            subagent_child_session_id: row.get(col_subagent_child_session_id)?,
             role: role.as_deref().and_then(Role::from_storage),
             content_preview: row.get(col_content_preview)?,
             content_len: row.get(col_content_len)?,

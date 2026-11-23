@@ -1,6 +1,7 @@
 use super::*;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::models::{ContextKind, ContextPreview};
@@ -61,6 +62,54 @@ fn drain_main_context() {
     }
 }
 
+#[derive(Clone, Default)]
+struct ModelSummaryLog(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for ModelSummaryLog {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl ModelSummaryLog {
+    fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        let log = Self::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(move || writer.clone())
+            .finish();
+        (log, tracing::subscriber::set_default(subscriber))
+    }
+
+    fn wait_for(&self, message: &str, request_id: Option<u64>) {
+        let request_field = request_id.map(|id| format!("request_id={id}"));
+        let seen = || {
+            String::from_utf8_lossy(&self.0.lock().unwrap())
+                .lines()
+                .any(|line| {
+                    line.contains(message)
+                        && request_field.as_ref().is_none_or(|field| {
+                            line.split_ascii_whitespace().any(|word| word == field)
+                        })
+                })
+        };
+        pump_main_context(seen);
+        assert!(
+            seen(),
+            "did not process the expected event: {message} {request_field:?}\n{}",
+            String::from_utf8_lossy(&self.0.lock().unwrap())
+        );
+    }
+}
+
 fn seed_message_transcript(db_path: &std::path::Path, session_id: &str, count: usize) {
     let conn = Connection::open(db_path).expect("open temp db");
     crate::database::schema::initialize_database(&conn).expect("initialize db");
@@ -116,7 +165,52 @@ fn seed_search_transcript(
     }
 }
 
-fn transcript_message_row(
+fn seed_model_summary_transcript(
+    db_path: &std::path::Path,
+    session_id: &str,
+    message_model: &str,
+    tool_model: &str,
+) {
+    let conn = Connection::open(db_path).expect("open temp db");
+    crate::database::schema::initialize_database(&conn).expect("initialize db");
+    conn.execute(
+        "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated)
+         VALUES (?1, 'claude', 0, 2, ?1, 0)",
+        [session_id],
+    )
+    .unwrap();
+    for index in [0, 1] {
+        conn.execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+             VALUES (?1, ?2, 'assistant', 'needle', 1700000000, ?3)",
+            params![session_id, index, message_model],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+             VALUES (?1, ?2, 'message', ?2)",
+            params![session_id, index],
+        )
+        .unwrap();
+    }
+    for (index, model) in [(7, message_model), (8, tool_model)] {
+        let call_id = format!("call-{index}");
+        conn.execute(
+            "INSERT INTO tool_calls (session_id, id, tool_name, status, model)
+             VALUES (?1, ?2, 'Read', 'completed', ?3)",
+            params![session_id, call_id, model],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_items (session_id, item_index, kind, tool_call_id)
+             VALUES (?1, ?2, 'tool_call', ?3)",
+            params![session_id, index, call_id],
+        )
+        .unwrap();
+    }
+}
+
+pub(super) fn transcript_message_row(
     item_index: i64,
     role: crate::models::Role,
     content: &str,
@@ -131,6 +225,7 @@ fn transcript_message_row(
         content_len: Some(content.len() as i64),
         timestamp: Some(item_index),
         model: None,
+        tool_call_model: None,
         tool_call_id: None,
         tool_name: None,
         tool_status: None,
@@ -138,6 +233,8 @@ fn transcript_message_row(
         tool_input_json: None,
         tool_output_text: None,
         duration_ms: None,
+        subagent_source_model: None,
+        subagent_child_session_id: None,
         subagent_id: None,
         subagent_title: None,
         subagent_prompt: None,
@@ -145,7 +242,10 @@ fn transcript_message_row(
     }
 }
 
-fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::TranscriptItemRow {
+pub(super) fn transcript_tool_row(
+    item_index: i64,
+    tool_name: &str,
+) -> crate::database::TranscriptItemRow {
     crate::database::TranscriptItemRow {
         item_index,
         kind: crate::models::TranscriptItemKind::ToolCall,
@@ -156,6 +256,7 @@ fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::Tra
         content_len: None,
         timestamp: None,
         model: None,
+        tool_call_model: None,
         tool_call_id: Some(format!("call-{item_index}")),
         tool_name: Some(tool_name.to_string()),
         tool_status: Some(crate::models::ToolCallStatus::Completed),
@@ -163,6 +264,8 @@ fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::Tra
         tool_input_json: Some("{}".to_string()),
         tool_output_text: None,
         duration_ms: Some(1),
+        subagent_source_model: None,
+        subagent_child_session_id: None,
         subagent_id: None,
         subagent_title: None,
         subagent_prompt: None,
@@ -170,7 +273,10 @@ fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::Tra
     }
 }
 
-fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::TranscriptItemRow {
+pub(super) fn transcript_subagent_row(
+    item_index: i64,
+    title: &str,
+) -> crate::database::TranscriptItemRow {
     crate::database::TranscriptItemRow {
         item_index,
         kind: crate::models::TranscriptItemKind::Subagent,
@@ -181,6 +287,7 @@ fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::Tra
         content_len: None,
         timestamp: None,
         model: None,
+        tool_call_model: None,
         tool_call_id: None,
         tool_name: None,
         tool_status: None,
@@ -188,6 +295,8 @@ fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::Tra
         tool_input_json: None,
         tool_output_text: None,
         duration_ms: None,
+        subagent_source_model: None,
+        subagent_child_session_id: None,
         subagent_id: Some(format!("subagent-{item_index}")),
         subagent_title: Some(title.to_string()),
         subagent_prompt: Some("investigate".to_string()),
@@ -195,7 +304,68 @@ fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::Tra
     }
 }
 
-fn transcript_context_row(
+#[test]
+fn model_handoff_two_rows_share_one_child_lookup_and_keep_their_sources() {
+    use super::transcript::model_attribution::{ChildModels, collect_child_models};
+    let mut first = transcript_subagent_row(0, "First");
+    first.subagent_child_session_id = Some("child".into());
+    first.subagent_source_model = Some("A<&".into());
+    let mut second = transcript_subagent_row(1, "Second");
+    second.subagent_child_session_id = Some("child".into());
+    second.subagent_source_model = Some("D>&".into());
+    let rows = vec![first, second];
+    let mut child_reads = Vec::new();
+    let children = collect_child_models(
+        rows.iter()
+            .filter_map(|row| row.subagent_child_session_id.as_deref()),
+        |id| {
+            child_reads.push(id.to_string());
+            ChildModels::Indexed(SessionModels {
+                models: ["B", "C"]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, model)| crate::database::SessionModelUsage {
+                        model: (*model).into(),
+                        entry_count: 1,
+                        first_item_index: i as i64,
+                        first_used_at: None,
+                    })
+                    .collect(),
+                unattributed_count: 0,
+            })
+        },
+    );
+    assert_eq!(child_reads, ["child"]);
+    let prepared = SessionDetail::build_display_items(
+        rows,
+        "parent",
+        None,
+        &Default::default(),
+        Arc::new(PathBuf::from("/tmp/test.db")),
+        0,
+        &children,
+    );
+    let [
+        TranscriptItemInit::Subagent(first),
+        TranscriptItemInit::Subagent(second),
+    ] = prepared.items.as_slice()
+    else {
+        panic!("expected two subagents");
+    };
+    assert_eq!(first.handoff.plain, "requested by A<& · ran B +1");
+    assert_eq!(
+        first.handoff.markup,
+        "requested by <tt>A&lt;&amp;</tt> · ran <tt>B</tt> +1"
+    );
+    assert_eq!(second.handoff.plain, "requested by D>& · ran B +1");
+    assert_eq!(
+        second.handoff.markup,
+        "requested by <tt>D&gt;&amp;</tt> · ran <tt>B</tt> +1"
+    );
+    assert_eq!(second.handoff.tooltip, "requested by D>& · ran B, C");
+}
+
+pub(super) fn transcript_context_row(
     item_index: i64,
     context_id: &str,
     kind: ContextKind,
@@ -210,6 +380,7 @@ fn transcript_context_row(
         content_len: None,
         timestamp: None,
         model: None,
+        tool_call_model: None,
         tool_call_id: None,
         tool_name: None,
         tool_status: None,
@@ -217,6 +388,8 @@ fn transcript_context_row(
         tool_input_json: None,
         tool_output_text: None,
         duration_ms: None,
+        subagent_source_model: None,
+        subagent_child_session_id: None,
         subagent_id: None,
         subagent_title: None,
         subagent_prompt: None,
@@ -320,6 +493,7 @@ fn build_display_items_groups_two_tool_calls_into_one_tool_burst() {
         &matched_item_indexes,
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
 
     assert_eq!(prepared.items.len(), 2);
@@ -350,6 +524,262 @@ fn build_display_items_groups_two_tool_calls_into_one_tool_burst() {
     );
 }
 
+fn model_run_page(row: &gtk::Box) -> gtk::Widget {
+    row.first_child()
+        .unwrap()
+        .downcast::<gtk::Stack>()
+        .unwrap()
+        .visible_child()
+        .unwrap()
+}
+
+fn model_run_marker(page: &gtk::Widget) -> Option<gtk::Widget> {
+    page.first_child()
+        .filter(|widget| widget.has_css_class("model-run-marker"))
+}
+
+fn model_run_caption(marker: &gtk::Widget) -> gtk::Label {
+    marker
+        .first_child()
+        .unwrap()
+        .next_sibling()
+        .unwrap()
+        .downcast()
+        .unwrap()
+}
+
+fn assert_model_run_description(widget: &gtk::Widget, expected: &std::ffi::CStr) {
+    use gtk::glib::translate::{ToGlibPtr, from_glib_full};
+    let accessible: &gtk::Accessible = widget.upcast_ref();
+    // SAFETY: GTK expects a NUL-terminated UTF-8 string for Description.
+    let mismatch = unsafe {
+        let result = gtk::ffi::gtk_test_accessible_check_property(
+            accessible.to_glib_none().0,
+            gtk::ffi::GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+            expected.as_ptr(),
+        );
+        (!result.is_null()).then(|| from_glib_full::<_, glib::GString>(result))
+    };
+    assert_eq!(mismatch, None);
+}
+
+#[gtk::test]
+fn model_run_single_rows_show_markers_and_reset_recycled_descriptions() {
+    use crate::models::Role;
+    use relm4::typed_view::list::RelmListItem;
+
+    let mut assistant = transcript_message_row(0, Role::Assistant, "response");
+    assistant.model = Some("A".into());
+    let user = transcript_message_row(1, Role::User, "question");
+    let mut tool = transcript_tool_row(2, "Read");
+    tool.tool_call_model = Some("B<&".into());
+    let mut subagent = transcript_subagent_row(3, "Delegation");
+    subagent.subagent_source_model = Some("C".into());
+    let rows = vec![assistant, user, tool, subagent];
+    let prepared = SessionDetail::build_display_items(
+        rows,
+        "session-1",
+        None,
+        &BTreeSet::new(),
+        Arc::new(PathBuf::from("/tmp/test.db")),
+        0,
+        &Default::default(),
+    );
+    let (sender, _receiver) = relm4::channel();
+    let (mut row, mut widgets) = TranscriptItemData::setup(&glib::Object::new());
+
+    for (init, expected) in prepared.items.into_iter().zip([
+        Some(("A", c"Model: A")),
+        None,
+        Some(("B<&", c"Model changed to B<& from A")),
+        Some(("C", c"Model changed to C from B<&")),
+    ]) {
+        let mut data = TranscriptItemData::from_init(init, sender.clone());
+        data.bind(&mut widgets, &mut row);
+        let page = model_run_page(&row);
+        let marker = model_run_marker(&page);
+        if let Some((caption, description)) = expected {
+            let marker = marker.as_ref().expect("model run marker");
+            assert!(marker.get_visible());
+            assert!(!marker.is_focusable());
+            let label = model_run_caption(marker);
+            assert_eq!(label.text(), caption);
+            assert!(label.has_css_class("monospace"));
+            assert!(!label.is_selectable());
+            assert_model_run_description(&page, description);
+        } else {
+            assert!(!marker.as_ref().is_some_and(|marker| marker.get_visible()));
+        }
+        data.unbind(&mut widgets, &mut row);
+        assert!(!gtk::test_accessible_has_property(
+            &page,
+            gtk::AccessibleProperty::Description,
+        ));
+        if let Some(marker) = marker {
+            assert!(!marker.get_visible());
+            assert!(model_run_caption(&marker).text().is_empty());
+        }
+    }
+}
+
+#[gtk::test]
+fn model_run_burst_promotes_first_marker_keeps_jump_and_recycles_hint() {
+    use crate::models::Role;
+    use relm4::typed_view::list::RelmListItem;
+
+    fn prepared_burst(message_model: &str, models: [Option<&str>; 3]) -> PreparedTranscriptItems {
+        let mut assistant = transcript_message_row(0, Role::Assistant, "response");
+        assistant.model = Some(message_model.into());
+        let mut rows = vec![assistant];
+        for (i, (name, model)) in ["Read", "Edit", "Read"].into_iter().zip(models).enumerate() {
+            let mut row = transcript_tool_row(i as i64 + 1, name);
+            row.tool_call_model = model.map(str::to_string);
+            rows.push(row);
+        }
+        SessionDetail::build_display_items(
+            rows,
+            "session-1",
+            None,
+            &BTreeSet::new(),
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+            &Default::default(),
+        )
+    }
+
+    let mut prepared = prepared_burst("C", [Some("A"), Some("B"), None]);
+    assert_eq!(prepared.items.len(), 2);
+    assert!(matches!(
+        prepared.items[1],
+        TranscriptItemInit::ToolBurst(_)
+    ));
+    assert_eq!(
+        prepared.display_targets_by_item_index,
+        BTreeMap::from([
+            (
+                0,
+                ScrollTarget {
+                    display_index: 0,
+                    child_index: None
+                }
+            ),
+            (
+                1,
+                ScrollTarget {
+                    display_index: 1,
+                    child_index: Some(0)
+                }
+            ),
+            (
+                2,
+                ScrollTarget {
+                    display_index: 1,
+                    child_index: Some(1)
+                }
+            ),
+            (
+                3,
+                ScrollTarget {
+                    display_index: 1,
+                    child_index: Some(2)
+                }
+            ),
+        ]),
+    );
+    let (sender, _receiver) = relm4::channel();
+    let mut changed = TranscriptItemData::from_init(prepared.items.pop().unwrap(), sender.clone());
+    let (mut row, mut widgets) = TranscriptItemData::setup(&glib::Object::new());
+    changed.bind(&mut widgets, &mut row);
+    let page = model_run_page(&row);
+    let marker = model_run_marker(&page).expect("promoted model run marker");
+    assert!(marker.get_visible());
+    assert_eq!(model_run_caption(&marker).text(), "A");
+    assert_model_run_description(&page, c"Model changed to A from C");
+
+    let row_widget = row.clone().upcast::<gtk::Widget>();
+    let (button, revealer) = SessionDetail::tool_burst_header_and_revealer(&row_widget)
+        .expect("burst header and revealer");
+    let header_wrap = button.child().unwrap().last_child().unwrap();
+    let hint = header_wrap
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+    assert!(hint.get_visible());
+    assert_eq!(hint.text(), "→ model not recorded");
+    assert!(hint.has_css_class("monospace"));
+    let tooltip = hint.tooltip_text().unwrap();
+    assert!(tooltip.find('B').unwrap() < tooltip.find("model not recorded").unwrap());
+    assert!(!revealer.reveals_child());
+
+    // Go through the existing scroll path, not the header click alone.
+    SessionDetail::focus_scroll_target(
+        &row_widget,
+        prepared.display_targets_by_item_index[&2],
+        &row_widget,
+    );
+    assert!(revealer.reveals_child());
+    assert!(marker.get_visible());
+    assert!(!hint.get_visible());
+    let children = revealer.child().unwrap();
+    let first = children.first_child().unwrap();
+    let second = first.next_sibling().unwrap();
+    let third = second.next_sibling().unwrap();
+    assert!(third.next_sibling().is_none());
+    assert!(!model_run_marker(&first).is_some_and(|marker| marker.get_visible()));
+    assert!(!gtk::test_accessible_has_property(
+        &first,
+        gtk::AccessibleProperty::Description,
+    ));
+    let second_marker = model_run_marker(&second).unwrap();
+    let third_marker = model_run_marker(&third).unwrap();
+    assert!(second_marker.get_visible());
+    assert!(third_marker.get_visible());
+    assert_eq!(model_run_caption(&second_marker).text(), "B");
+    let unknown = model_run_caption(&third_marker);
+    assert_eq!(unknown.text(), "model not recorded");
+    assert!(!unknown.has_css_class("monospace"));
+    assert_model_run_description(&second, c"Model changed to B from A");
+    assert_model_run_description(&third, c"Model not recorded (previously B)");
+
+    button.emit_clicked();
+    assert!(!revealer.reveals_child());
+    assert!(hint.get_visible());
+    changed.unbind(&mut widgets, &mut row);
+    assert!(!hint.get_visible());
+    assert!(hint.text().is_empty());
+    assert!(hint.tooltip_text().is_none());
+    assert!(!marker.get_visible());
+    assert!(model_run_caption(&marker).text().is_empty());
+    assert!(!gtk::test_accessible_has_property(
+        &page,
+        gtk::AccessibleProperty::Description
+    ));
+    assert!(children.first_child().is_none());
+
+    let mut unchanged = prepared_burst("A", [Some("A"); 3]);
+    assert_eq!(
+        unchanged.display_targets_by_item_index,
+        prepared.display_targets_by_item_index
+    );
+    let mut unchanged = TranscriptItemData::from_init(unchanged.items.pop().unwrap(), sender);
+    unchanged.bind(&mut widgets, &mut row);
+    assert!(!gtk::test_accessible_has_property(
+        &page,
+        gtk::AccessibleProperty::Description
+    ));
+    assert!(!marker.get_visible());
+    assert!(!hint.get_visible());
+    changed.expanded.set(true);
+    assert!(!revealer.reveals_child(), "old binding is disconnected");
+    button.emit_clicked();
+    assert!(revealer.reveals_child());
+    button.emit_clicked();
+    assert!(!revealer.reveals_child());
+    assert!(!hint.get_visible(), "unchanged burst never shows a hint");
+    unchanged.unbind(&mut widgets, &mut row);
+}
+
 #[test]
 fn build_display_items_limits_search_highlight_to_navigable_matches() {
     let rows = vec![
@@ -371,6 +801,7 @@ fn build_display_items_limits_search_highlight_to_navigable_matches() {
         &matched_item_indexes,
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
 
     match &prepared.items[0] {
@@ -670,6 +1101,243 @@ fn session_detail_summary_popover_hosts_summary_root() {
 }
 
 #[gtk::test]
+fn model_summary_switch_rejects_late_usage_and_jump_expands_burst() {
+    fn slugs(rows: &gtk::Box) -> Vec<String> {
+        std::iter::successors(rows.first_child(), |row| row.next_sibling())
+            .map(|row| {
+                row.first_child()
+                    .unwrap()
+                    .downcast::<gtk::Label>()
+                    .unwrap()
+                    .text()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    let (log, _trace) = ModelSummaryLog::capture();
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let session_a = build_test_session(None, None, 0, 0, 0);
+    let mut session_b = session_a.clone();
+    session_b.id = "test-session-b".into();
+    seed_model_summary_transcript(temp_db.path(), &session_a.id, "old-message", "old-tool");
+    seed_model_summary_transcript(temp_db.path(), &session_b.id, "opus", "sonnet");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    let (popover, section, rows, list_view) = {
+        let parts = controller.state().get();
+        (
+            parts.widgets.summary_popover.clone(),
+            parts.widgets.summary.models_section.clone(),
+            parts.widgets.summary.models_rows.clone(),
+            parts.model.messages.view.clone(),
+        )
+    };
+
+    let window = gtk::Window::new();
+    window.set_default_size(960, 650);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let menu = gtk::MenuButton::new();
+    menu.set_popover(Some(&popover));
+    content.append(&menu);
+    content.append(controller.widget());
+    window.set_child(Some(&content));
+    window.present();
+
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session_a.clone()),
+        search_query: None,
+    });
+    pump_main_context(|| section.get_visible());
+    assert_eq!(slugs(&rows), ["old-message", "old-tool"]);
+    assert!(
+        rows.last_child()
+            .unwrap()
+            .last_child()
+            .unwrap()
+            .is::<gtk::Button>()
+    );
+    let initial_request = controller.state().get().model.transcript.request_id;
+
+    // Start a real reload of A, then hold its SQLite read until B is active.
+    let writer = Connection::open(temp_db.path()).unwrap();
+    writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let session_a_id = session_a.id.clone();
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session_a),
+        search_query: None,
+    });
+    pump_main_context(|| controller.state().get().model.transcript.request_id != initial_request);
+    assert!(!section.get_visible());
+    assert!(
+        rows.first_child().is_none(),
+        "old jump buttons must be removed"
+    );
+    let stale_request = controller.state().get().model.transcript.request_id;
+    log.wait_for(
+        "Session detail deferred first page load started",
+        Some(stale_request),
+    );
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session_b.clone()),
+        search_query: None,
+    });
+    pump_main_context(|| {
+        controller
+            .state()
+            .get()
+            .model
+            .session
+            .as_ref()
+            .is_some_and(|session| session.id == session_b.id)
+    });
+    assert_ne!(
+        controller.state().get().model.transcript.request_id,
+        stale_request
+    );
+    assert!(!section.get_visible());
+
+    // Observe insertions as well as final state, so even a transient stale
+    // result that B's result later replaces cannot pass unnoticed.
+    let stale_shown = Rc::new(Cell::new(false));
+    let row_children = rows.observe_children();
+    row_children.connect_items_changed({
+        let stale_shown = stale_shown.clone();
+        let rows = rows.downgrade();
+        move |_, _, _, added| {
+            if added != 0
+                && rows
+                    .upgrade()
+                    .is_some_and(|rows| slugs(&rows).iter().any(|slug| slug.starts_with("old-")))
+            {
+                stale_shown.set(true);
+            }
+        }
+    });
+    writer.execute_batch("COMMIT").unwrap();
+    log.wait_for(
+        &format!("Ignoring stale transcript page for session {session_a_id}"),
+        None,
+    );
+    pump_main_context(|| slugs(&rows) == ["opus", "sonnet"]);
+    assert_eq!(slugs(&rows), ["opus", "sonnet"]);
+    assert!(section.get_visible());
+    assert!(!stale_shown.get());
+
+    let search_request = controller.state().get().model.search.request_id;
+    controller.emit(SessionDetailMsg::SetMatchPositions {
+        request_id: search_request,
+        session_id: session_b.id,
+        positions: vec![
+            MatchPosition { item_index: 0 },
+            MatchPosition { item_index: 1 },
+        ],
+    });
+    pump_main_context(|| controller.state().get().model.search.match_positions.len() == 2);
+    controller.emit(SessionDetailMsg::NextMatch);
+    pump_main_context(|| controller.state().get().model.search.current_match == 1);
+    assert_eq!(controller.state().get().model.search.current_match, 1);
+
+    let target = controller
+        .state()
+        .get()
+        .model
+        .transcript
+        .display_targets_by_item_index[&8];
+    assert_eq!(target.child_index, Some(1));
+    let target_row =
+        || SessionDetail::observed_row_widget_for_display_index(&list_view, target.display_index);
+    pump_main_context(|| target_row().is_some());
+    let (_, target_revealer) =
+        SessionDetail::tool_burst_header_and_revealer(&target_row().expect("realized target row"))
+            .expect("target is a tool burst");
+    assert!(!target_revealer.reveals_child());
+
+    controller.emit(SessionDetailMsg::JumpToModelFirstUse(-1));
+    drain_main_context();
+    assert!(!target_revealer.reveals_child());
+    popover.popup();
+    assert!(popover.is_visible());
+    assert!(section.is_visible());
+    rows.last_child()
+        .unwrap()
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    pump_main_context(|| !popover.is_visible() && target_revealer.reveals_child());
+    assert!(!popover.is_visible());
+    assert!(target_revealer.reveals_child());
+    assert_eq!(controller.state().get().model.search.current_match, 1);
+
+    controller.emit(SessionDetailMsg::Clear);
+    pump_main_context(|| controller.state().get().model.session.is_none());
+    assert!(!section.get_visible());
+    assert!(rows.first_child().is_none());
+    window.destroy();
+    assert!(!stale_shown.get());
+}
+
+#[gtk::test]
+fn model_summary_rejects_stale_request_for_active_session() {
+    let (log, _trace) = ModelSummaryLog::capture();
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let session = build_test_session(None, None, 0, 0, 0);
+    seed_model_summary_transcript(temp_db.path(), &session.id, "opus", "sonnet");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    let writer = Connection::open(temp_db.path()).unwrap();
+    writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
+
+    let current_request = || controller.state().get().model.transcript.request_id;
+    let before_load = current_request();
+    let set_session = || {
+        controller.emit(SessionDetailMsg::SetSession {
+            session: Box::new(session.clone()),
+            search_query: None,
+        });
+    };
+    set_session();
+    pump_main_context(|| current_request() != before_load);
+    let stale_request = current_request();
+    log.wait_for(
+        "Session detail deferred first page load started",
+        Some(stale_request),
+    );
+
+    // Reopen the same session. The result already in flight will have the
+    // active session ID but an outdated request ID.
+    set_session();
+    pump_main_context(|| current_request() != stale_request);
+    let fresh_request = current_request();
+    assert_ne!(fresh_request, stale_request);
+    let rows = {
+        let parts = controller.state().get();
+        assert_eq!(parts.model.session.as_ref().unwrap().id, session.id);
+        parts.widgets.summary.models_rows.clone()
+    };
+    assert!(rows.first_child().is_none());
+
+    let insertions = Rc::new(Cell::new(0));
+    let row_children = rows.observe_children();
+    row_children.connect_items_changed({
+        let insertions = insertions.clone();
+        move |_, _, _, added| insertions.set(insertions.get() + added)
+    });
+    writer.execute_batch("COMMIT").unwrap();
+    log.wait_for(
+        &format!("Ignoring stale transcript page for session {}", session.id),
+        None,
+    );
+    log.wait_for("Loaded transcript", Some(fresh_request));
+
+    // Both commands have been handled. Only the fresh request may insert
+    // rows, regardless of the order in which the two workers finish.
+    assert_eq!(row_children.n_items(), 2);
+    assert_eq!(insertions.get(), 2);
+    assert_eq!(current_request(), fresh_request);
+}
+
+#[gtk::test]
 fn session_detail_content_column_contains_only_transcript_scroller() {
     let temp_db = tempfile::NamedTempFile::new().expect("temp db");
     let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
@@ -903,6 +1571,7 @@ fn message_full_content_target_rejects_stale_session_or_message() {
         &BTreeSet::new(),
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
     let item = TranscriptItemData::from_init(
         prepared.items.into_iter().next().expect("message item"),
@@ -943,6 +1612,7 @@ fn message_full_content_success_clears_raw_pending_state() {
         &BTreeSet::new(),
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
     let item = TranscriptItemData::from_init(
         prepared.items.into_iter().next().expect("message item"),
@@ -975,6 +1645,7 @@ fn message_full_content_failure_resets_expansion_and_raw_state() {
         &BTreeSet::new(),
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
     let item = TranscriptItemData::from_init(
         prepared.items.into_iter().next().expect("message item"),
@@ -1114,6 +1785,7 @@ fn context_breaks_tool_bursts_without_changing_matches() {
         &matched_item_indexes,
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
 
     let with_context = SessionDetail::build_display_items(
@@ -1128,6 +1800,7 @@ fn context_breaks_tool_bursts_without_changing_matches() {
         &matched_item_indexes,
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
 
     // Navigable message identity is unchanged by the inserted context row.
@@ -1171,6 +1844,8 @@ fn context_breaks_tool_bursts_without_changing_matches() {
         ToolCallItemInit, build_tool_burst_init,
     };
     let needle_tool = |item_index: usize, id: &str, name: &str| ToolCallItemInit {
+        model_run: None,
+        model_run_text: None,
         item_index,
         transcript_item_index: item_index as i64,
         session_id: "session-1".to_string(),
@@ -1209,6 +1884,7 @@ fn context_full_content_target_rejects_stale_session_or_context() {
         &BTreeSet::new(),
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
     let item = TranscriptItemData::from_init(
         prepared.items.into_iter().next().expect("context item"),

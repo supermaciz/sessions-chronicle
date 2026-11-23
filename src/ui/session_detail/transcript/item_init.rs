@@ -6,6 +6,9 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 
+use super::model_attribution::{
+    ChildModels, CollapsedModelHint, HandoffCaption, ModelRunMarker, ModelRunText, handoff_caption,
+};
 use crate::models::{ContextPreview, MessagePreview, ReasoningPreview, Role, ToolCallStatus};
 
 #[derive(Clone)]
@@ -15,6 +18,8 @@ pub struct MessageItemInit {
     pub preview: MessagePreview,
     pub highlight_query: Option<String>,
     pub db_path: Arc<PathBuf>,
+    pub model_run: Option<ModelRunMarker>,
+    pub model_run_text: Option<ModelRunText>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +53,8 @@ pub struct ToolCallItemInit {
     pub highlight_query: Option<String>,
     /// Presence flags for associated reasoning attachment.
     pub reasoning_preview: ReasoningPreview,
+    pub model_run: Option<ModelRunMarker>,
+    pub model_run_text: Option<ModelRunText>,
 }
 
 impl ToolCallItemInit {
@@ -70,6 +77,10 @@ pub struct ToolBurstItemInit {
     pub visible_reasoning_child_count: usize,
     pub encrypted_only_child_count: usize,
     pub default_expanded: bool,
+    pub model_run: Option<ModelRunMarker>,
+    pub model_run_text: Option<ModelRunText>,
+    pub later_changes: Vec<ModelRunMarker>,
+    pub collapsed_model_hint: Option<CollapsedModelHint>,
 }
 
 #[derive(Clone)]
@@ -80,6 +91,9 @@ pub struct SubagentItemInit {
     pub subagent_id: String,
     pub title: String,
     pub reasoning_preview: ReasoningPreview,
+    pub handoff: HandoffCaption,
+    pub model_run: Option<ModelRunMarker>,
+    pub model_run_text: Option<ModelRunText>,
 }
 
 #[derive(Clone)]
@@ -110,6 +124,25 @@ impl TranscriptItemInit {
             Self::Context(init) => init.item_index,
         }
     }
+
+    /// Resolve presentation after any first-child marker has been promoted.
+    fn with_prepared_model_run(mut self) -> Self {
+        let (marker, text) = match &mut self {
+            Self::Message(init) => (&init.model_run, &mut init.model_run_text),
+            Self::ToolCall(init) => (&init.model_run, &mut init.model_run_text),
+            Self::Subagent(init) => (&init.model_run, &mut init.model_run_text),
+            Self::ToolBurst(init) => {
+                init.collapsed_model_hint = CollapsedModelHint::from_changes(&init.later_changes);
+                for child in &mut init.tool_calls {
+                    child.model_run_text = child.model_run.as_ref().map(ModelRunText::from);
+                }
+                (&init.model_run, &mut init.model_run_text)
+            }
+            Self::Context(_) => return self,
+        };
+        *text = marker.as_ref().map(ModelRunText::from);
+        self
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -136,7 +169,7 @@ pub(crate) fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
 
 pub fn build_tool_burst_init(
     item_index: usize,
-    tool_calls: Vec<ToolCallItemInit>,
+    mut tool_calls: Vec<ToolCallItemInit>,
     default_expanded: bool,
 ) -> ToolBurstItemInit {
     let mut category_counts = BTreeMap::new();
@@ -146,6 +179,14 @@ pub fn build_tool_burst_init(
     let mut child_match_counts = Vec::new();
     let mut visible_reasoning_child_count = 0usize;
     let mut encrypted_only_child_count = 0usize;
+    let model_run = tool_calls
+        .first_mut()
+        .and_then(|first| first.model_run.take());
+    let later_changes: Vec<_> = tool_calls
+        .iter()
+        .skip(1)
+        .filter_map(|tool_call| tool_call.model_run.clone())
+        .collect();
 
     for tool_call in &tool_calls {
         *category_counts
@@ -177,6 +218,10 @@ pub fn build_tool_burst_init(
         visible_reasoning_child_count,
         encrypted_only_child_count,
         default_expanded,
+        model_run,
+        model_run_text: None,
+        later_changes,
+        collapsed_model_hint: None,
     }
 }
 
@@ -193,6 +238,8 @@ fn transcript_item_init_from_row(
         session_id,
         highlight_query,
         db_path,
+        &BTreeMap::new(),
+        None,
     )
 }
 
@@ -202,6 +249,8 @@ fn transcript_item_init_from_row_with_index(
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
+    children: &BTreeMap<String, ChildModels>,
+    model_run: Option<ModelRunMarker>,
 ) -> TranscriptItemInit {
     use crate::models::{ToolCallStatus, TranscriptItemKind};
 
@@ -230,6 +279,8 @@ fn transcript_item_init_from_row_with_index(
                 },
                 highlight_query,
                 db_path,
+                model_run,
+                model_run_text: None,
             })
         }
         TranscriptItemKind::ToolCall => TranscriptItemInit::ToolCall(ToolCallItemInit {
@@ -252,6 +303,8 @@ fn transcript_item_init_from_row_with_index(
             duration_ms: row.duration_ms,
             highlight_query,
             reasoning_preview: row.reasoning_preview,
+            model_run,
+            model_run_text: None,
         }),
         TranscriptItemKind::Subagent => TranscriptItemInit::Subagent(SubagentItemInit {
             item_index,
@@ -263,6 +316,13 @@ fn transcript_item_init_from_row_with_index(
                 .clone()
                 .unwrap_or_else(|| "Subagent".to_string()),
             reasoning_preview: row.reasoning_preview,
+            handoff: handoff_caption(
+                row.subagent_source_model.as_deref(),
+                row.subagent_child_session_id.as_deref(),
+                children,
+            ),
+            model_run,
+            model_run_text: None,
         }),
         TranscriptItemKind::Context => match row.context.clone() {
             Some(preview) => TranscriptItemInit::Context(ContextItemInit {
@@ -314,6 +374,8 @@ fn empty_message_init(
         },
         highlight_query,
         db_path,
+        model_run: None,
+        model_run_text: None,
     })
 }
 
@@ -323,6 +385,8 @@ pub fn transcript_item_init_from_display_item(
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
+    children: &BTreeMap<String, ChildModels>,
+    model_runs: &mut BTreeMap<i64, ModelRunMarker>,
 ) -> TranscriptItemInit {
     match item {
         crate::ui::session_detail::transcript::display::DisplayTranscriptItem::Single(row) => {
@@ -332,6 +396,8 @@ pub fn transcript_item_init_from_display_item(
                 session_id,
                 highlight_query,
                 db_path,
+                children,
+                model_runs.remove(&row.item_index),
             )
         }
         crate::ui::session_detail::transcript::display::DisplayTranscriptItem::ToolBurst(burst) => {
@@ -345,6 +411,8 @@ pub fn transcript_item_init_from_display_item(
                         session_id,
                         highlight_query.clone(),
                         db_path.clone(),
+                        children,
+                        model_runs.remove(&row.item_index),
                     ) {
                         TranscriptItemInit::ToolCall(tool_call) => Some(tool_call),
                         other => {
@@ -361,6 +429,7 @@ pub fn transcript_item_init_from_display_item(
             TranscriptItemInit::ToolBurst(build_tool_burst_init(display_index, tool_calls, false))
         }
     }
+    .with_prepared_model_run()
 }
 
 #[cfg(test)]
@@ -384,6 +453,7 @@ mod tests {
             content_len: None,
             timestamp: None,
             model: None,
+            tool_call_model: None,
             tool_call_id: Some(format!("call-{item_index}")),
             tool_name: Some(tool_name.to_string()),
             tool_status: Some(ToolCallStatus::Completed),
@@ -391,6 +461,8 @@ mod tests {
             tool_input_json: Some(input_json.to_string()),
             tool_output_text: output_text.map(str::to_string),
             duration_ms: Some(25),
+            subagent_source_model: None,
+            subagent_child_session_id: None,
             subagent_id: None,
             subagent_title: None,
             subagent_prompt: None,
@@ -416,6 +488,8 @@ mod tests {
     #[test]
     fn tool_call_match_count_uses_only_displayed_preview() {
         let with_preview = ToolCallItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 7,
             transcript_item_index: 7,
             session_id: "session-1".to_string(),
@@ -431,6 +505,8 @@ mod tests {
         assert_eq!(count_tool_call_matches(&with_preview), 1);
 
         let with_summary_fallback = ToolCallItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 8,
             transcript_item_index: 8,
             session_id: "session-1".to_string(),
@@ -450,6 +526,8 @@ mod tests {
     fn tool_burst_item_init_aggregates_categories_duration_errors_and_matches() {
         let tool_calls = vec![
             ToolCallItemInit {
+                model_run: None,
+                model_run_text: None,
                 item_index: 1,
                 transcript_item_index: 1,
                 session_id: "session-1".to_string(),
@@ -463,6 +541,8 @@ mod tests {
                 reasoning_preview: ReasoningPreview::default(),
             },
             ToolCallItemInit {
+                model_run: None,
+                model_run_text: None,
                 item_index: 2,
                 transcript_item_index: 2,
                 session_id: "session-1".to_string(),
@@ -506,6 +586,8 @@ mod tests {
             "session-1",
             None,
             Arc::new(PathBuf::from("/tmp/test.db")),
+            &BTreeMap::new(),
+            &mut BTreeMap::new(),
         );
 
         let TranscriptItemInit::ToolBurst(burst_init) = init else {
@@ -528,6 +610,7 @@ mod tests {
             content_len: None,
             timestamp: None,
             model: None,
+            tool_call_model: None,
             tool_call_id: None,
             tool_name: None,
             tool_status: None,
@@ -535,6 +618,8 @@ mod tests {
             tool_input_json: None,
             tool_output_text: None,
             duration_ms: None,
+            subagent_source_model: None,
+            subagent_child_session_id: None,
             subagent_id: None,
             subagent_title: None,
             subagent_prompt: None,
@@ -567,6 +652,7 @@ mod tests {
             content_len: None,
             timestamp: None,
             model: None,
+            tool_call_model: None,
             tool_call_id: Some("call-1".to_string()),
             tool_name: Some("bash".to_string()),
             tool_status: Some(ToolCallStatus::Completed),
@@ -574,6 +660,8 @@ mod tests {
             tool_input_json: Some(r#"{"command":"ls -la"}"#.to_string()),
             tool_output_text: None,
             duration_ms: Some(12),
+            subagent_source_model: None,
+            subagent_child_session_id: None,
             subagent_id: None,
             subagent_title: None,
             subagent_prompt: None,

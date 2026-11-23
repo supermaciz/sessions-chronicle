@@ -33,7 +33,8 @@ use super::{IndexingStats, SessionIndexer, push_indexing_error};
 /// does not match this value is treated as stale. Generation 6 uses a common
 /// V1/V2 snapshot and explicit per-representation retry state.
 /// Generation 7 backfills tool-call and subagent model attribution.
-const OPENCODE_READER_GENERATION: i64 = 7;
+/// Generation 8 restores assistant content stored in V2 `session_part` rows.
+const OPENCODE_READER_GENERATION: i64 = 8;
 
 /// Outcome of processing one selected session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +113,7 @@ impl EnumeratedSqliteSource {
         let conn = open_read_snapshot(&self.path)?;
         let generations = opencode_sources::probe_generations(&conn)?;
         if generations.contains(&OpenCodeGeneration::V2) {
-            self.v2 = Some(V2Reader::from_connection(&self.path, Rc::clone(&conn)));
+            self.v2 = Some(V2Reader::from_connection(&self.path, Rc::clone(&conn))?);
         }
         if generations.contains(&OpenCodeGeneration::V1) {
             self.v1 = Some(SqliteBackend::from_connection(&self.path, conn));
@@ -595,8 +596,8 @@ impl SessionIndexer {
         };
 
         if generations.contains(&OpenCodeGeneration::V2) {
-            let reader = V2Reader::from_connection(db_path, Rc::clone(&conn));
             match (|| -> Result<_> {
+                let reader = V2Reader::from_connection(db_path, Rc::clone(&conn))?;
                 let ids = reader.list_session_ids()?;
                 Ok((reader, ids))
             })() {
