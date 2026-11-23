@@ -624,6 +624,20 @@ capture). No documented path, file-naming or JSONL field change:
 - v2.1.325: fixed recent turns sometimes missing from a resumed session after
   an unclean exit.
 
+Added by the 2026-11-23 format-watch pass (changelog v2.1.326–v2.1.330, npm
+latest/next 2.1.330, stable 2.1.323, Agent SDK 0.3.330; no fresh local
+capture). No documented path, file-naming or JSONL field change:
+
+- v2.1.328–v2.1.330: many Code Mode fixes (resume of sessions where one reply
+  ran several scripts, edits after Esc, cut-off scripts); Code Mode can now
+  start with OpenTelemetry enabled. The JSONL shape of Code Mode tool calls is
+  still not captured.
+- v2.1.330: fixed `--continue` / `--resume` failing when the last saved
+  message has a missing or invalid `timestamp`; fixed session files growing
+  by many megabytes when MCP tool input schemas are refused by the API.
+- v2.1.330 (self-hosted runner only): Bash commands skip the file diff when
+  nothing needs it, so transcripts can lack it.
+
 ### Meta Flag
 
 - `isMeta: true` → Skip for title extraction (system-generated)

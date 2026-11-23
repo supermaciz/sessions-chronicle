@@ -85,6 +85,28 @@ Confirmed on 2026-10-14 from upstream `dev`
 > config key is kept as a deprecated no-op) and adds `console_watches` and
 > `mcp_events`. npm `opencode-ai` latest is still 1.19.5. No impact on the V2
 > reader.
+>
+> **Format watch 2026-11-23 (`dev` `331010a1e`, tags
+> [v2.3.1](https://github.com/anomalyco/opencode/releases/tag/v2.3.1) and
+> [v2.3.2](https://github.com/anomalyco/opencode/releases/tag/v2.3.2), 2026-11-17/18; npm
+> `opencode-ai` latest 1.19.6, `dev` dist-tag `0.0.0-dev-202611170722`):**
+> **`experimental.part_rows` is now on by default on `dev`**
+> ([#65039](https://github.com/anomalyco/opencode/commit/c0aeddbef0), 2026-11-20,
+> `packages/core/src/session/projector.ts`: `part_rows !== false`). With it,
+> assistant messages are written with `data.content: []` and each part lives
+> in its own `session_part` row, and an older inline assistant row is moved to
+> `session_part` the next time it is written. The V2 reader only projects
+> inline `session_message.data.content`, so assistant text and tool calls
+> written this way will be missing. No tag or npm build contains this yet
+> (v2.3.2 still defaults to `false`); it will break the V2 reader in the next
+> v2 release unless the reader learns `session_part`. New migrations do not
+> touch session tables: `automation.event_position`, `automation_active_idx`,
+> `machine` table and `machine.key`. `session-message.ts` only gains comments.
+> The flag registry adds `sqlite_fts` (an SQLite full-text index of sessions),
+> `machines`, `home_memory`, `project_overlay`, `recommended_api`,
+> `full_codemode` and `opencode_api`, drops `background_compaction`,
+> `schedules` and `mcp_events`, and introduces opt-in-only flags (`todo`,
+> `opencode_api`).
 
 ### Schema
 

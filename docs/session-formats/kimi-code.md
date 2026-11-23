@@ -82,6 +82,19 @@ gains `prediction`. The parser takes the model of every `llm.request` and sums
 every `usage.record`, so prediction requests could leak into step models or
 token totals once released (likely, not reproduced).
 
+**Format watch 2026-11-23 (2.7.2 + main `2601b49c`):** npm latest
+[2.7.2](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) (2.6.3, then
+2.7.0 to 2.7.2 on 2026-11-20). `wire-manifest.d.ts` is unchanged since
+`6e35efa9` (still 67 persisted record types), `WIRE_PROTOCOL_VERSION` is still
+`'1.5'`, and the `state.json` metadata schema only lost comments. The
+`prediction` values are now **released** in 2.7.0
+([#4754](https://github.com/MoonshotAI/kimi-code/pull/4754)) behind an opt-in env var
+(`KIMI_CODE_EXPERIMENTAL_PROMPT_PREDICTION=1`): prediction usage is written
+as `usage.record` with `usageScope: "prediction"`
+(`packages/agent-core-v2/src/session/usage/usageAgentModel.ts`), which the
+parser adds to token totals. Whether a `llm.request` with
+`kind: "prediction"` is written to the session journal is not confirmed.
+
 ---
 
 ## Storage & File Naming
