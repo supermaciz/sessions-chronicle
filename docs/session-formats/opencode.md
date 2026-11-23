@@ -5,9 +5,9 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 > **⚠️ Breaking change (OpenCode v2, confirmed 2026-10-14):** OpenCode's primary
 > session storage moved from the V1 `session` / `message` / `part` tables to
-> `session_v2` / `session_message`. In v2, parts are embedded in each message's
-> `content` array instead of living in a separate `part` table, and a tool part
-> identifies its tool with `name` (not `tool`). V1 tables are retained on
+> `session_v2` / `session_message`. In early V2, assistant parts are embedded
+> in `content`; newer V2 stores them in `session_part` by default. In either
+> case, a tool part identifies its tool with `name` (not `tool`). V1 tables are retained on
 > migrated databases as a legacy read model but are no longer written.
 > Earlier breaking change (≥ 2026-02-14): the JSON file tree was replaced by
 > SQLite.
@@ -18,7 +18,7 @@ See [SESSION_FORMAT_ANALYSIS.md](../SESSION_FORMAT_ANALYSIS.md) for cross-assist
 
 | Format | Path |
 |--------|------|
-| **Current (OpenCode v2, confirmed 2026-10-14)** | `~/.local/share/opencode/opencode.db` (default/latest/beta channels, SQLite WAL mode); `~/.local/share/opencode/opencode-<channel>.db` for other channels. Primary tables: `session_v2`, `session_message`. |
+| **Current (OpenCode V2)** | `~/.local/share/opencode/opencode.db` (default/latest/beta channels, SQLite WAL mode); `~/.local/share/opencode/opencode-<channel>.db` for other channels. Primary tables: `session_v2`, `session_message`, `session_part` (newer V2). |
 | **SQLite V1 (≥ 2026-02-14, legacy read model under v2)** | Same database files. Tables: `session`, `message`, `part`. Last written by OpenCode v1; retained after the v2 migration. |
 | **Legacy (pre-migration)** | `~/.local/share/opencode/storage/` (JSON files, retained post-migration) |
 
@@ -107,6 +107,11 @@ Confirmed on 2026-10-14 from upstream `dev`
 > `full_codemode` and `opencode_api`, drops `background_compaction`,
 > `schedules` and `mcp_events`, and introduces opt-in-only flags (`todo`,
 > `opencode_api`).
+>
+> **Confirmed in [v2.4.1](https://github.com/anomalyco/opencode/tree/v2.4.1):**
+> assistant messages are written with `content: []` by default and their
+> content is stored in `session_part`. The Sessions Chronicle V2 reader now
+> restores those parts before projection.
 
 ### Schema
 
@@ -236,8 +241,10 @@ Locally observed types in active use: `user`, `assistant`, `system`,
 
 ### Assistant `content[]` (the V2 equivalent of parts)
 
-Assistant messages embed their parts inline. `AssistantContent` has only three
-variants:
+Assistant messages can embed their parts inline or store them in
+`session_part`. Its `data` column holds the same `AssistantContent` JSON item.
+OpenCode reads those rows in ascending `ordinal` for each `message_id`, then
+appends any inline content. `AssistantContent` has only three variants:
 
 | Content `type` | Key fields |
 |----------------|------------|
@@ -834,7 +841,7 @@ turns.
 Implemented:
 
 - V2 reader: `crates/core/src/parsers/opencode/v2.rs` + `v2_projection.rs`
-  (reads `session_v2` / `session_message`).
+  (reads `session_v2` / `session_message` and optional `session_part`).
 - V1 SQLite backend: `crates/core/src/parsers/opencode/sqlite_backend.rs`
   (reads `session` / `message` / `part`).
 - JSON backend: `crates/core/src/parsers/opencode/json_backend.rs` (legacy
@@ -867,6 +874,9 @@ preserving favorites and other user-owned state.
 
 - Native `session_message` rows stream in `seq, id` order (never collected into
   a vector before projection) and feed the shared `ParsedSession`.
+- For assistant rows, `session_part` entries are read from the same snapshot in
+  `ordinal` order and prepended to any inline content. Cache reader generation 8
+  triggers a one-time reindex to restore content missed by older readers.
 - `user.text` becomes a user message; assistant `text` becomes an assistant
   message with per-message model; assistant `reasoning` uses the existing
   reasoning-attachment semantics (see below).

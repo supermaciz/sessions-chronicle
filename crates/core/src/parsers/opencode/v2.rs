@@ -1,15 +1,15 @@
 //! Native OpenCode V2 SQLite reader.
 //!
-//! Reads the `session_v2` / `session_message` tables (see the pinned upstream
-//! `packages/core/src/session/sql.ts`) through a read-only connection. A
+//! Reads `session_v2`, `session_message`, and optional `session_part` (see
+//! upstream `packages/core/src/session/sql.ts`) through a read-only connection. A
 //! shared read transaction pins one consistent snapshot for both generations;
 //! it is rolled back when the last reader is dropped and the source
 //! database is never modified.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, OptionalExtension};
-use serde_json::Value;
+use rusqlite::{Connection, OptionalExtension, Statement};
+use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -21,22 +21,29 @@ use super::{SessionMetadata, timestamp_from_millis};
 pub(crate) struct V2Reader {
     conn: Rc<Connection>,
     db_path: PathBuf,
+    has_part_table: bool,
 }
 
 impl V2Reader {
     #[cfg(test)]
     pub(crate) fn open(db_path: &Path) -> Result<Self> {
-        Ok(Self::from_connection(
-            db_path,
-            super::sqlite_source::open_read_snapshot(db_path)?,
-        ))
+        Self::from_connection(db_path, super::sqlite_source::open_read_snapshot(db_path)?)
     }
 
-    pub(crate) fn from_connection(db_path: &Path, conn: Rc<Connection>) -> Self {
-        Self {
+    pub(crate) fn from_connection(db_path: &Path, conn: Rc<Connection>) -> Result<Self> {
+        let has_part_table = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema
+                               WHERE type = 'table' AND name = 'session_part')",
+                [],
+                |row| row.get(0),
+            )
+            .context("Failed to detect OpenCode V2 session_part table")?;
+        Ok(Self {
             conn,
             db_path: db_path.to_path_buf(),
-        }
+            has_part_table,
+        })
     }
 
     pub(crate) fn list_session_ids(&self) -> Result<Vec<String>> {
@@ -61,6 +68,15 @@ impl V2Reader {
               ORDER BY seq, id",
         )?;
         let mut rows = stmt.query([session_id])?;
+        let mut part_stmt = if self.has_part_table {
+            Some(self.conn.prepare_cached(
+                "SELECT ordinal, data FROM session_part
+                  WHERE session_id = ?1 AND message_id = ?2
+                  ORDER BY ordinal",
+            )?)
+        } else {
+            None
+        };
 
         while let Some(row) = rows.next()? {
             let id: String = match row.get(0) {
@@ -103,7 +119,7 @@ impl V2Reader {
                     continue;
                 }
             };
-            let data: Value = match row.get::<_, String>(4) {
+            let mut data: Value = match row.get::<_, String>(4) {
                 Ok(raw) => match serde_json::from_str(&raw) {
                     Ok(value) => value,
                     Err(_) => {
@@ -123,6 +139,13 @@ impl V2Reader {
                     continue;
                 }
             };
+
+            if kind == "assistant"
+                && let (Some(statement), Some(data)) = (part_stmt.as_mut(), data.as_object_mut())
+            {
+                restore_assistant_parts(statement, session_id, &id, data)
+                    .with_context(|| format!("Failed to read parts of V2 message {id}"))?;
+            }
 
             projection.push(V2MessageRow {
                 id,
@@ -168,6 +191,39 @@ impl V2Reader {
             time_updated: timestamp_from_millis(updated_ms)?,
         })
     }
+}
+
+/// Match OpenCode's history reader: stored parts precede any inline tail.
+/// Only the current message's parts are held in memory.
+fn restore_assistant_parts(
+    stmt: &mut Statement<'_>,
+    session_id: &str,
+    message_id: &str,
+    data: &mut Map<String, Value>,
+) -> Result<()> {
+    let mut rows = stmt.query([session_id, message_id])?;
+    let mut parts = Vec::new();
+    while let Some(row) = rows.next()? {
+        let part = row
+            .get_ref(1)
+            .ok()
+            .and_then(|value| value.as_str().ok())
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+        match part {
+            Some(part) => parts.push(part),
+            None => {
+                let ordinal = row.get::<_, i64>(0).ok();
+                tracing::warn!("V2 message {message_id} has malformed part at ordinal {ordinal:?}");
+            }
+        }
+    }
+    if !parts.is_empty() {
+        if let Some(Value::Array(mut inline)) = data.remove("content") {
+            parts.append(&mut inline);
+        }
+        data.insert("content".to_owned(), Value::Array(parts));
+    }
+    Ok(())
 }
 
 /// Handles a row whose `data` payload could not be read. A corrupt user row is
