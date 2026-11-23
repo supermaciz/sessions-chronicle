@@ -213,9 +213,14 @@ impl TranscriptItemData {
             widgets.model_label.set_label("");
         }
 
-        widgets
-            .ts_label
-            .set_label(&message.preview.timestamp.format("%H:%M:%S").to_string());
+        widgets.ts_label.set_label(
+            &message
+                .preview
+                .timestamp
+                .with_timezone(&chrono::Local)
+                .format("%H:%M:%S")
+                .to_string(),
+        );
     }
 
     fn bind_message_reasoning(&self, widgets: &mut MessagePageWidgets, message: &MessageItemInit) {
@@ -1187,6 +1192,23 @@ mod tests {
             encrypted_only: false,
         };
         init
+    }
+
+    #[gtk::test]
+    fn message_header_time_is_local() {
+        let widgets = super::build_message_page();
+        let mut message = message_init();
+        message.preview.timestamp = chrono::DateTime::from_timestamp(1700000003, 0).unwrap();
+        super::TranscriptItemData::bind_message_header(&widgets, &message);
+        assert_eq!(
+            widgets.ts_label.label(),
+            message
+                .preview
+                .timestamp
+                .with_timezone(&chrono::Local)
+                .format("%H:%M:%S")
+                .to_string()
+        );
     }
 
     fn truncated_message_init() -> MessageItemInit {

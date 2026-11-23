@@ -53,7 +53,10 @@ pub fn load_session_models(db_path: &Path, session_id: &str) -> Result<SessionMo
                         model,
                         entry_count: 1,
                         first_item_index: row.get(0)?,
-                        first_used_at: row.get(2)?,
+                        // Some OpenCode tool calls contain milliseconds, not seconds.
+                        first_used_at: row
+                            .get::<_, Option<i64>>(2)?
+                            .filter(|timestamp| *timestamp <= 100_000_000_000),
                     });
                 }
             }

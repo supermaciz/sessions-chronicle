@@ -740,7 +740,7 @@ fn model_run_burst_promotes_first_marker_keeps_jump_and_recycles_hint() {
     assert_eq!(unknown.text(), "model not recorded");
     assert!(!unknown.has_css_class("monospace"));
     assert_model_run_description(&second, c"Model changed to B from A");
-    assert_model_run_description(&third, c"Model changed to model not recorded from B");
+    assert_model_run_description(&third, c"Model not recorded (previously B)");
 
     button.emit_clicked();
     assert!(!revealer.reveals_child());

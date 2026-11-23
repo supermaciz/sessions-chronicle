@@ -115,3 +115,61 @@ fn model_usage_projection() {
     );
     assert_eq!(row(2).subagent_child_session_id.as_deref(), Some("child"));
 }
+
+#[test]
+fn model_usage_milliseconds_are_unknown_without_changing_order_or_counts() {
+    let (_dir, path) = seeded();
+    let db = Connection::open(&path).unwrap();
+    db.execute_batch(
+        "UPDATE tool_calls SET started_at = 1712000201100 WHERE session_id = 'parent' AND id = 'a';",
+    ).unwrap();
+    let usage = load_session_models(&path, "parent").unwrap();
+    let actual: Vec<_> = usage
+        .models
+        .iter()
+        .map(|m| {
+            (
+                m.model.as_str(),
+                m.entry_count,
+                m.first_item_index,
+                m.first_used_at,
+            )
+        })
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            ("B", 2, 2, None),
+            ("A", 2, 3, None),
+            ("C", 1, 8, Some(1700000000)),
+            ("D", 1, 9, Some(1700000010))
+        ]
+    );
+}
+
+#[test]
+fn model_usage_preserves_nonblank_padded_slugs() {
+    let (_dir, path) = seeded();
+    let db = Connection::open(&path).unwrap();
+    db.execute(
+        "UPDATE tool_calls SET model = ' A ' WHERE session_id = 'parent' AND id = 'a'",
+        [],
+    )
+    .unwrap();
+    let usage = load_session_models(&path, "parent").unwrap();
+    let actual: Vec<_> = usage
+        .models
+        .iter()
+        .map(|m| (m.model.as_str(), m.entry_count, m.first_item_index))
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            ("B", 2, 2),
+            (" A ", 1, 3),
+            ("A", 1, 5),
+            ("C", 1, 8),
+            ("D", 1, 9)
+        ]
+    );
+}

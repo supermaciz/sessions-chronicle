@@ -121,8 +121,5 @@ fn model_run_presentation_prepares_caption_and_style_for_known_and_null_models()
         unknown.previous_markup.as_deref(),
         Some("from <tt>A&lt;&amp;</tt>")
     );
-    assert_eq!(
-        unknown.description,
-        "Model changed to model not recorded from A<&"
-    );
+    assert_eq!(unknown.description, "Model not recorded (previously A<&)");
 }

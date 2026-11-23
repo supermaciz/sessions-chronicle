@@ -38,6 +38,9 @@ impl From<&ModelRunMarker> for ModelRunText {
                 .as_deref()
                 .map(|model| format!("from <tt>{}</tt>", gtk::glib::markup_escape_text(model))),
             description: match &marker.previous {
+                Some(previous) if marker.model.is_none() => {
+                    format!("Model not recorded (previously {previous})")
+                }
                 Some(previous) => format!("Model changed to {caption} from {previous}"),
                 None => format!("Model: {caption}"),
             },
