@@ -15,8 +15,9 @@ use relm4::{
 };
 
 use crate::database::{
-    MatchPosition, find_session_match_positions, load_all_transcript_items,
-    load_context_full_content, load_message_full_content,
+    MatchPosition, SessionModels, TranscriptItemRow, find_session_match_positions,
+    load_all_transcript_items, load_context_full_content, load_message_full_content,
+    load_session_models,
 };
 use crate::models::Session;
 use crate::ui::session_detail::transcript::display::{
@@ -54,6 +55,7 @@ pub struct SessionDetail {
     preview_len: usize,
     transcript: TranscriptState,
     search: SearchState,
+    pending_summary_models: Cell<Option<SessionModels>>,
     pending_toast: Cell<bool>,
     inspector: Controller<ToolInspectorPane>,
     inspector_open: bool,
@@ -64,7 +66,7 @@ pub struct SessionDetail {
 /// `request_id` is bumped to invalidate in-flight page loads; `loading` and
 /// `loaded_count` track paging progress, and `display_targets_by_item_index`
 /// maps transcript item indexes to their resolved [`ScrollTarget`] as pages
-/// render (consumed by search-jump navigation).
+/// render (consumed by search and model first-use jumps).
 #[derive(Default)]
 struct TranscriptState {
     load_started_at: Option<Instant>,
@@ -91,7 +93,7 @@ struct SearchState {
     scroll_to_item: Cell<Option<ScrollTarget>>,
 }
 
-/// Resolved scroll destination for global search navigation.
+/// Resolved scroll destination for transcript navigation.
 ///
 /// `display_index` addresses a top-level transcript row in the factory. When
 /// `child_index` is present, the target is a child entry inside an expanded
@@ -145,6 +147,7 @@ pub enum SessionDetailMsg {
     },
     PrevMatch,
     NextMatch,
+    JumpToModelFirstUse(i64),
     ClearSearch,
     StartDeferredFirstPageLoad {
         request_id: u64,
@@ -191,12 +194,17 @@ pub enum SessionDetailMsg {
     OpenChildSession(String),
 }
 
+pub struct LoadedTranscript {
+    rows: Vec<TranscriptItemRow>,
+    models: SessionModels,
+}
+
 pub enum SessionDetailCmd {
     TranscriptLoaded {
         request_id: u64,
         session_id: String,
         load_duration_ms: u128,
-        result: Result<Vec<crate::database::TranscriptItemRow>, String>,
+        result: Result<LoadedTranscript, String>,
     },
     SearchPositionsLoaded {
         request_id: u64,
@@ -228,7 +236,12 @@ impl std::fmt::Debug for SessionDetailCmd {
                 result,
             } => {
                 let result_summary = match result {
-                    Ok(rows) => format!("Ok({} rows)", rows.len()),
+                    Ok(loaded) => format!(
+                        "Ok({} rows, {} models, {} unattributed entries)",
+                        loaded.rows.len(),
+                        loaded.models.models.len(),
+                        loaded.models.unattributed_count,
+                    ),
                     Err(err) => format!("Err({err})"),
                 };
 
@@ -306,6 +319,7 @@ impl Component for SessionDetail {
     additional_fields! {
         pub summary_popover: gtk::Popover,
         summary: SessionSummary,
+        summary_input: relm4::Sender<SessionDetailMsg>,
     }
 
     view! {
@@ -498,6 +512,7 @@ impl Component for SessionDetail {
             preview_len: PREVIEW_LEN,
             transcript: TranscriptState::default(),
             search: SearchState::default(),
+            pending_summary_models: Cell::new(None),
             pending_toast: Cell::new(false),
             inspector,
             inspector_open: false,
@@ -505,6 +520,7 @@ impl Component for SessionDetail {
 
         let messages_box = model.messages.view.clone();
         let summary = SessionSummary::init(());
+        let summary_input = sender.input_sender().clone();
         let summary_popover = gtk::Popover::new();
         // The popover measures the summary more aggressively than the inner
         // scrolled window, so the width has to be constrained here.
@@ -577,6 +593,15 @@ impl Component for SessionDetail {
             }
             SessionDetailMsg::NextMatch => {
                 self.jump_to_next_match(&sender);
+            }
+            SessionDetailMsg::JumpToModelFirstUse(item_index) => {
+                if let Some(&target) = self
+                    .transcript
+                    .display_targets_by_item_index
+                    .get(&item_index)
+                {
+                    self.search.scroll_to_item.set(Some(target));
+                }
             }
             SessionDetailMsg::StartDeferredFirstPageLoad {
                 request_id,
@@ -706,6 +731,17 @@ impl Component for SessionDetail {
             widgets
                 .content_stack
                 .set_visible_child(&widgets.loading_state);
+        }
+
+        if let Some(models) = self.pending_summary_models.take() {
+            let popover = widgets.summary_popover.downgrade();
+            let input = widgets.summary_input.clone();
+            widgets.summary.update_models(&models, move |item_index| {
+                if let Some(popover) = popover.upgrade() {
+                    popover.popdown();
+                }
+                let _ = input.send(SessionDetailMsg::JumpToModelFirstUse(item_index));
+            });
         }
 
         if self.pending_toast.take() {
@@ -861,6 +897,8 @@ impl SessionDetail {
         let query_len = normalized.as_ref().map(|query| query.len()).unwrap_or(0);
 
         self.session = Some(session);
+        self.pending_summary_models
+            .set(Some(SessionModels::default()));
         self.start_transcript_load(sender, &session_id, true, "open");
         tracing::info!(
             request_id = self.transcript.request_id,
@@ -1083,6 +1121,8 @@ impl SessionDetail {
         self.invalidate_transcript_requests();
         self.invalidate_search_requests();
         self.session = None;
+        self.pending_summary_models
+            .set(Some(SessionModels::default()));
         self.transcript.load_started_at = None;
         self.clear_messages_safely_with_metrics("component_clear");
         self.transcript.loaded_count = 0;
@@ -1420,6 +1460,17 @@ impl SessionDetail {
         sender.spawn_oneshot_command(move || {
             let started_at = Instant::now();
             let result = load_all_transcript_items(&db_path, &session_id, preview_len)
+                .map(|rows| {
+                    let models = load_session_models(&db_path, &session_id).unwrap_or_else(|err| {
+                        tracing::warn!(
+                            request_id,
+                            session_id = session_id.as_str(),
+                            "Failed to load session model usage: {err:#}"
+                        );
+                        SessionModels::default()
+                    });
+                    LoadedTranscript { rows, models }
+                })
                 .map_err(|err| format!("{err:#}"));
             let load_duration_ms = started_at.elapsed().as_millis();
 
@@ -1600,7 +1651,7 @@ impl SessionDetail {
         request_id: u64,
         session_id: String,
         load_duration_ms: u128,
-        result: Result<Vec<crate::database::TranscriptItemRow>, String>,
+        result: Result<LoadedTranscript, String>,
     ) {
         if request_id != self.transcript.request_id {
             tracing::debug!("Ignoring stale transcript page for session {}", session_id,);
@@ -1620,7 +1671,7 @@ impl SessionDetail {
         }
 
         match result {
-            Ok(rows) => {
+            Ok(LoadedTranscript { rows, models }) => {
                 tracing::info!(
                     request_id,
                     session_id = session_id.as_str(),
@@ -1628,7 +1679,8 @@ impl SessionDetail {
                     load_duration_ms,
                     "Loaded transcript"
                 );
-                self.apply_transcript_rows(sender, request_id, &session_id, rows)
+                self.apply_transcript_rows(sender, request_id, &session_id, rows);
+                self.pending_summary_models.set(Some(models));
             }
             Err(err) => self.handle_transcript_page_error(&session_id, err),
         }
@@ -1901,6 +1953,8 @@ impl SessionDetail {
     fn clear_for_navigation_back(&mut self) {
         self.invalidate_search_requests();
         self.session = None;
+        self.pending_summary_models
+            .set(Some(SessionModels::default()));
         self.transcript.load_started_at = None;
         self.clear_messages_safely_with_metrics("navigation_back");
         self.transcript.loaded_count = 0;

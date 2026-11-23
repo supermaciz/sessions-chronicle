@@ -1,5 +1,6 @@
 use super::*;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -113,6 +114,51 @@ fn seed_search_transcript(
             params![session_id, index as i64],
         )
         .expect("insert search transcript item");
+    }
+}
+
+fn seed_model_summary_transcript(
+    db_path: &std::path::Path,
+    session_id: &str,
+    message_model: &str,
+    tool_model: &str,
+) {
+    let conn = Connection::open(db_path).expect("open temp db");
+    crate::database::schema::initialize_database(&conn).expect("initialize db");
+    conn.execute(
+        "INSERT INTO sessions (id, tool, start_time, message_count, file_path, last_updated)
+         VALUES (?1, 'claude', 0, 2, ?1, 0)",
+        [session_id],
+    )
+    .unwrap();
+    for index in [0, 1] {
+        conn.execute(
+            "INSERT INTO messages (session_id, message_index, role, content, timestamp, model)
+             VALUES (?1, ?2, 'assistant', 'needle', 1700000000, ?3)",
+            params![session_id, index, message_model],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_items (session_id, item_index, kind, message_index)
+             VALUES (?1, ?2, 'message', ?2)",
+            params![session_id, index],
+        )
+        .unwrap();
+    }
+    for (index, model) in [(7, message_model), (8, tool_model)] {
+        let call_id = format!("call-{index}");
+        conn.execute(
+            "INSERT INTO tool_calls (session_id, id, tool_name, status, model)
+             VALUES (?1, ?2, 'Read', 'completed', ?3)",
+            params![session_id, call_id, model],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcript_items (session_id, item_index, kind, tool_call_id)
+             VALUES (?1, ?2, 'tool_call', ?3)",
+            params![session_id, index, call_id],
+        )
+        .unwrap();
     }
 }
 
@@ -679,6 +725,180 @@ fn session_detail_summary_popover_hosts_summary_root() {
             .is_ok(),
         "summary template root should be a bounded ScrolledWindow"
     );
+}
+
+#[gtk::test]
+fn model_summary_switch_rejects_late_usage_and_jump_expands_burst() {
+    fn slugs(rows: &gtk::Box) -> Vec<String> {
+        std::iter::successors(rows.first_child(), |row| row.next_sibling())
+            .map(|row| {
+                row.first_child()
+                    .unwrap()
+                    .downcast::<gtk::Label>()
+                    .unwrap()
+                    .text()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    let temp_db = tempfile::NamedTempFile::new().expect("temp db");
+    let session_a = build_test_session(None, None, 0, 0, 0);
+    let mut session_b = session_a.clone();
+    session_b.id = "test-session-b".into();
+    seed_model_summary_transcript(temp_db.path(), &session_a.id, "old-message", "old-tool");
+    seed_model_summary_transcript(temp_db.path(), &session_b.id, "opus", "sonnet");
+    let controller = SessionDetail::builder().launch(temp_db.path().to_path_buf());
+    let (popover, section, rows, list_view) = {
+        let parts = controller.state().get();
+        (
+            parts.widgets.summary_popover.clone(),
+            parts.widgets.summary.models_section.clone(),
+            parts.widgets.summary.models_rows.clone(),
+            parts.model.messages.view.clone(),
+        )
+    };
+
+    let window = gtk::Window::new();
+    window.set_default_size(960, 650);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let menu = gtk::MenuButton::new();
+    menu.set_popover(Some(&popover));
+    content.append(&menu);
+    content.append(controller.widget());
+    window.set_child(Some(&content));
+    window.present();
+
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session_a.clone()),
+        search_query: None,
+    });
+    pump_main_context(|| section.get_visible());
+    assert_eq!(slugs(&rows), ["old-message", "old-tool"]);
+    assert!(
+        rows.last_child()
+            .unwrap()
+            .last_child()
+            .unwrap()
+            .is::<gtk::Button>()
+    );
+    let initial_request = controller.state().get().model.transcript.request_id;
+
+    // Dispatch a real reload of A, but prevent its SQLite read from returning
+    // until B is active. Run the deferred start explicitly to control ordering.
+    let writer = Connection::open(temp_db.path()).unwrap();
+    writer.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    let session_a_id = session_a.id.clone();
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session_a),
+        search_query: None,
+    });
+    pump_main_context(|| controller.state().get().model.transcript.request_id != initial_request);
+    assert!(!section.get_visible());
+    assert!(
+        rows.first_child().is_none(),
+        "old jump buttons must be removed"
+    );
+    let stale_request = controller.state().get().model.transcript.request_id;
+    controller.emit(SessionDetailMsg::StartDeferredFirstPageLoad {
+        request_id: stale_request,
+        session_id: session_a_id,
+    });
+    controller.emit(SessionDetailMsg::SetSession {
+        session: Box::new(session_b.clone()),
+        search_query: None,
+    });
+    pump_main_context(|| {
+        controller
+            .state()
+            .get()
+            .model
+            .session
+            .as_ref()
+            .is_some_and(|session| session.id == session_b.id)
+    });
+    assert_ne!(
+        controller.state().get().model.transcript.request_id,
+        stale_request
+    );
+    assert!(!section.get_visible());
+
+    // Observe insertions as well as final state, so even a transient stale
+    // result that B's result later replaces cannot pass unnoticed.
+    let stale_shown = Rc::new(Cell::new(false));
+    let row_children = rows.observe_children();
+    row_children.connect_items_changed({
+        let stale_shown = stale_shown.clone();
+        let rows = rows.downgrade();
+        move |_, _, _, added| {
+            if added != 0
+                && rows
+                    .upgrade()
+                    .is_some_and(|rows| slugs(&rows).iter().any(|slug| slug.starts_with("old-")))
+            {
+                stale_shown.set(true);
+            }
+        }
+    });
+    writer.execute_batch("COMMIT").unwrap();
+    pump_main_context(|| slugs(&rows) == ["opus", "sonnet"]);
+    assert_eq!(slugs(&rows), ["opus", "sonnet"]);
+    assert!(section.get_visible());
+    assert!(!stale_shown.get());
+
+    let search_request = controller.state().get().model.search.request_id;
+    controller.emit(SessionDetailMsg::SetMatchPositions {
+        request_id: search_request,
+        session_id: session_b.id,
+        positions: vec![
+            MatchPosition { item_index: 0 },
+            MatchPosition { item_index: 1 },
+        ],
+    });
+    pump_main_context(|| controller.state().get().model.search.match_positions.len() == 2);
+    controller.emit(SessionDetailMsg::NextMatch);
+    pump_main_context(|| controller.state().get().model.search.current_match == 1);
+    assert_eq!(controller.state().get().model.search.current_match, 1);
+
+    let target = controller
+        .state()
+        .get()
+        .model
+        .transcript
+        .display_targets_by_item_index[&8];
+    assert_eq!(target.child_index, Some(1));
+    let target_row =
+        || SessionDetail::observed_row_widget_for_display_index(&list_view, target.display_index);
+    pump_main_context(|| target_row().is_some());
+    let (_, target_revealer) =
+        SessionDetail::tool_burst_header_and_revealer(&target_row().expect("realized target row"))
+            .expect("target is a tool burst");
+    assert!(!target_revealer.reveals_child());
+
+    controller.emit(SessionDetailMsg::JumpToModelFirstUse(-1));
+    drain_main_context();
+    assert!(!target_revealer.reveals_child());
+    popover.popup();
+    assert!(popover.is_visible());
+    assert!(section.is_visible());
+    rows.last_child()
+        .unwrap()
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap()
+        .emit_clicked();
+    pump_main_context(|| !popover.is_visible() && target_revealer.reveals_child());
+    assert!(!popover.is_visible());
+    assert!(target_revealer.reveals_child());
+    assert_eq!(controller.state().get().model.search.current_match, 1);
+    assert!(!stale_shown.get());
+
+    controller.emit(SessionDetailMsg::Clear);
+    pump_main_context(|| controller.state().get().model.session.is_none());
+    assert!(!section.get_visible());
+    assert!(rows.first_child().is_none());
+    window.destroy();
 }
 
 #[gtk::test]
