@@ -27,7 +27,9 @@ use crate::ui::session_detail::transcript::item_data::{TranscriptItemData, Trans
 use crate::ui::session_detail::transcript::item_init::{
     TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
 };
-use crate::ui::session_detail::transcript::model_attribution::{ChildModels, collect_child_models};
+use crate::ui::session_detail::transcript::model_attribution::{
+    ChildModels, collect_child_models, model_run_markers,
+};
 use crate::ui::session_detail::transcript::typed_row::TRANSCRIPT_ROW_WIDGET_NAME_PREFIX;
 use crate::ui::tool_inspector_pane::{
     ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput,
@@ -1323,6 +1325,7 @@ impl SessionDetail {
     ) -> PreparedTranscriptItems {
         let mut items = Vec::new();
         let mut display_targets_by_item_index = BTreeMap::new();
+        let mut model_runs = model_run_markers(&rows);
 
         for (offset, item) in group_transcript_rows(rows).into_iter().enumerate() {
             let display_index = base_display_index + offset;
@@ -1346,6 +1349,7 @@ impl SessionDetail {
                 item_highlight,
                 db_path.clone(),
                 children,
+                &mut model_runs,
             ));
         }
 
@@ -2054,9 +2058,9 @@ impl SessionDetail {
         let tool_burst_page = stack
             .child_by_name("tool-burst")
             .and_then(|w| w.downcast::<gtk::Box>().ok())?;
-        let header_button = tool_burst_page
-            .first_child()
-            .and_then(|w| w.downcast::<gtk::Button>().ok())?;
+        let header_button =
+            std::iter::successors(tool_burst_page.first_child(), gtk::Widget::next_sibling)
+                .find_map(|widget| widget.downcast::<gtk::Button>().ok())?;
         let revealer = header_button
             .next_sibling()
             .and_then(|w| w.downcast::<gtk::Revealer>().ok())?;

@@ -210,7 +210,7 @@ fn seed_model_summary_transcript(
     }
 }
 
-fn transcript_message_row(
+pub(super) fn transcript_message_row(
     item_index: i64,
     role: crate::models::Role,
     content: &str,
@@ -242,7 +242,10 @@ fn transcript_message_row(
     }
 }
 
-fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::TranscriptItemRow {
+pub(super) fn transcript_tool_row(
+    item_index: i64,
+    tool_name: &str,
+) -> crate::database::TranscriptItemRow {
     crate::database::TranscriptItemRow {
         item_index,
         kind: crate::models::TranscriptItemKind::ToolCall,
@@ -270,7 +273,10 @@ fn transcript_tool_row(item_index: i64, tool_name: &str) -> crate::database::Tra
     }
 }
 
-fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::TranscriptItemRow {
+pub(super) fn transcript_subagent_row(
+    item_index: i64,
+    title: &str,
+) -> crate::database::TranscriptItemRow {
     crate::database::TranscriptItemRow {
         item_index,
         kind: crate::models::TranscriptItemKind::Subagent,
@@ -359,7 +365,7 @@ fn model_handoff_two_rows_share_one_child_lookup_and_keep_their_sources() {
     assert_eq!(second.handoff.tooltip, "requested by D>& · ran B, C");
 }
 
-fn transcript_context_row(
+pub(super) fn transcript_context_row(
     item_index: i64,
     context_id: &str,
     kind: ContextKind,
@@ -516,6 +522,262 @@ fn build_display_items_groups_two_tool_calls_into_one_tool_burst() {
             child_index: Some(1),
         })
     );
+}
+
+fn model_run_page(row: &gtk::Box) -> gtk::Widget {
+    row.first_child()
+        .unwrap()
+        .downcast::<gtk::Stack>()
+        .unwrap()
+        .visible_child()
+        .unwrap()
+}
+
+fn model_run_marker(page: &gtk::Widget) -> Option<gtk::Widget> {
+    page.first_child()
+        .filter(|widget| widget.has_css_class("model-run-marker"))
+}
+
+fn model_run_caption(marker: &gtk::Widget) -> gtk::Label {
+    marker
+        .first_child()
+        .unwrap()
+        .next_sibling()
+        .unwrap()
+        .downcast()
+        .unwrap()
+}
+
+fn assert_model_run_description(widget: &gtk::Widget, expected: &std::ffi::CStr) {
+    use gtk::glib::translate::{ToGlibPtr, from_glib_full};
+    let accessible: &gtk::Accessible = widget.upcast_ref();
+    // SAFETY: GTK expects a NUL-terminated UTF-8 string for Description.
+    let mismatch = unsafe {
+        let result = gtk::ffi::gtk_test_accessible_check_property(
+            accessible.to_glib_none().0,
+            gtk::ffi::GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+            expected.as_ptr(),
+        );
+        (!result.is_null()).then(|| from_glib_full::<_, glib::GString>(result))
+    };
+    assert_eq!(mismatch, None);
+}
+
+#[gtk::test]
+fn model_run_single_rows_show_markers_and_reset_recycled_descriptions() {
+    use crate::models::Role;
+    use relm4::typed_view::list::RelmListItem;
+
+    let mut assistant = transcript_message_row(0, Role::Assistant, "response");
+    assistant.model = Some("A".into());
+    let user = transcript_message_row(1, Role::User, "question");
+    let mut tool = transcript_tool_row(2, "Read");
+    tool.tool_call_model = Some("B<&".into());
+    let mut subagent = transcript_subagent_row(3, "Delegation");
+    subagent.subagent_source_model = Some("C".into());
+    let rows = vec![assistant, user, tool, subagent];
+    let prepared = SessionDetail::build_display_items(
+        rows,
+        "session-1",
+        None,
+        &BTreeSet::new(),
+        Arc::new(PathBuf::from("/tmp/test.db")),
+        0,
+        &Default::default(),
+    );
+    let (sender, _receiver) = relm4::channel();
+    let (mut row, mut widgets) = TranscriptItemData::setup(&glib::Object::new());
+
+    for (init, expected) in prepared.items.into_iter().zip([
+        Some(("A", c"Model: A")),
+        None,
+        Some(("B<&", c"Model changed to B<& from A")),
+        Some(("C", c"Model changed to C from B<&")),
+    ]) {
+        let mut data = TranscriptItemData::from_init(init, sender.clone());
+        data.bind(&mut widgets, &mut row);
+        let page = model_run_page(&row);
+        let marker = model_run_marker(&page);
+        if let Some((caption, description)) = expected {
+            let marker = marker.as_ref().expect("model run marker");
+            assert!(marker.get_visible());
+            assert!(!marker.is_focusable());
+            let label = model_run_caption(marker);
+            assert_eq!(label.text(), caption);
+            assert!(label.has_css_class("monospace"));
+            assert!(!label.is_selectable());
+            assert_model_run_description(&page, description);
+        } else {
+            assert!(!marker.as_ref().is_some_and(|marker| marker.get_visible()));
+        }
+        data.unbind(&mut widgets, &mut row);
+        assert!(!gtk::test_accessible_has_property(
+            &page,
+            gtk::AccessibleProperty::Description,
+        ));
+        if let Some(marker) = marker {
+            assert!(!marker.get_visible());
+            assert!(model_run_caption(&marker).text().is_empty());
+        }
+    }
+}
+
+#[gtk::test]
+fn model_run_burst_promotes_first_marker_keeps_jump_and_recycles_hint() {
+    use crate::models::Role;
+    use relm4::typed_view::list::RelmListItem;
+
+    fn prepared_burst(message_model: &str, models: [Option<&str>; 3]) -> PreparedTranscriptItems {
+        let mut assistant = transcript_message_row(0, Role::Assistant, "response");
+        assistant.model = Some(message_model.into());
+        let mut rows = vec![assistant];
+        for (i, (name, model)) in ["Read", "Edit", "Read"].into_iter().zip(models).enumerate() {
+            let mut row = transcript_tool_row(i as i64 + 1, name);
+            row.tool_call_model = model.map(str::to_string);
+            rows.push(row);
+        }
+        SessionDetail::build_display_items(
+            rows,
+            "session-1",
+            None,
+            &BTreeSet::new(),
+            Arc::new(PathBuf::from("/tmp/test.db")),
+            0,
+            &Default::default(),
+        )
+    }
+
+    let mut prepared = prepared_burst("C", [Some("A"), Some("B"), None]);
+    assert_eq!(prepared.items.len(), 2);
+    assert!(matches!(
+        prepared.items[1],
+        TranscriptItemInit::ToolBurst(_)
+    ));
+    assert_eq!(
+        prepared.display_targets_by_item_index,
+        BTreeMap::from([
+            (
+                0,
+                ScrollTarget {
+                    display_index: 0,
+                    child_index: None
+                }
+            ),
+            (
+                1,
+                ScrollTarget {
+                    display_index: 1,
+                    child_index: Some(0)
+                }
+            ),
+            (
+                2,
+                ScrollTarget {
+                    display_index: 1,
+                    child_index: Some(1)
+                }
+            ),
+            (
+                3,
+                ScrollTarget {
+                    display_index: 1,
+                    child_index: Some(2)
+                }
+            ),
+        ]),
+    );
+    let (sender, _receiver) = relm4::channel();
+    let mut changed = TranscriptItemData::from_init(prepared.items.pop().unwrap(), sender.clone());
+    let (mut row, mut widgets) = TranscriptItemData::setup(&glib::Object::new());
+    changed.bind(&mut widgets, &mut row);
+    let page = model_run_page(&row);
+    let marker = model_run_marker(&page).expect("promoted model run marker");
+    assert!(marker.get_visible());
+    assert_eq!(model_run_caption(&marker).text(), "A");
+    assert_model_run_description(&page, c"Model changed to A from C");
+
+    let row_widget = row.clone().upcast::<gtk::Widget>();
+    let (button, revealer) = SessionDetail::tool_burst_header_and_revealer(&row_widget)
+        .expect("burst header and revealer");
+    let header_wrap = button.child().unwrap().last_child().unwrap();
+    let hint = header_wrap
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+    assert!(hint.get_visible());
+    assert_eq!(hint.text(), "→ model not recorded");
+    assert!(!hint.has_css_class("monospace"));
+    let tooltip = hint.tooltip_text().unwrap();
+    assert!(tooltip.find('B').unwrap() < tooltip.find("model not recorded").unwrap());
+    assert!(!revealer.reveals_child());
+
+    // Go through the existing scroll path, not the header click alone.
+    SessionDetail::focus_scroll_target(
+        &row_widget,
+        prepared.display_targets_by_item_index[&2],
+        &row_widget,
+    );
+    assert!(revealer.reveals_child());
+    assert!(marker.get_visible());
+    assert!(!hint.get_visible());
+    let children = revealer.child().unwrap();
+    let first = children.first_child().unwrap();
+    let second = first.next_sibling().unwrap();
+    let third = second.next_sibling().unwrap();
+    assert!(third.next_sibling().is_none());
+    assert!(!model_run_marker(&first).is_some_and(|marker| marker.get_visible()));
+    assert!(!gtk::test_accessible_has_property(
+        &first,
+        gtk::AccessibleProperty::Description,
+    ));
+    let second_marker = model_run_marker(&second).unwrap();
+    let third_marker = model_run_marker(&third).unwrap();
+    assert!(second_marker.get_visible());
+    assert!(third_marker.get_visible());
+    assert_eq!(model_run_caption(&second_marker).text(), "B");
+    let unknown = model_run_caption(&third_marker);
+    assert_eq!(unknown.text(), "model not recorded");
+    assert!(!unknown.has_css_class("monospace"));
+    assert_model_run_description(&second, c"Model changed to B from A");
+    assert_model_run_description(&third, c"Model changed to model not recorded from B");
+
+    button.emit_clicked();
+    assert!(!revealer.reveals_child());
+    assert!(hint.get_visible());
+    changed.unbind(&mut widgets, &mut row);
+    assert!(!hint.get_visible());
+    assert!(hint.text().is_empty());
+    assert!(hint.tooltip_text().is_none());
+    assert!(!marker.get_visible());
+    assert!(model_run_caption(&marker).text().is_empty());
+    assert!(!gtk::test_accessible_has_property(
+        &page,
+        gtk::AccessibleProperty::Description
+    ));
+    assert!(children.first_child().is_none());
+
+    let mut unchanged = prepared_burst("A", [Some("A"); 3]);
+    assert_eq!(
+        unchanged.display_targets_by_item_index,
+        prepared.display_targets_by_item_index
+    );
+    let mut unchanged = TranscriptItemData::from_init(unchanged.items.pop().unwrap(), sender);
+    unchanged.bind(&mut widgets, &mut row);
+    assert!(!gtk::test_accessible_has_property(
+        &page,
+        gtk::AccessibleProperty::Description
+    ));
+    assert!(!marker.get_visible());
+    assert!(!hint.get_visible());
+    changed.expanded.set(true);
+    assert!(!revealer.reveals_child(), "old binding is disconnected");
+    button.emit_clicked();
+    assert!(revealer.reveals_child());
+    button.emit_clicked();
+    assert!(!revealer.reveals_child());
+    assert!(!hint.get_visible(), "unchanged burst never shows a hint");
+    unchanged.unbind(&mut widgets, &mut row);
 }
 
 #[test]
@@ -1582,6 +1844,8 @@ fn context_breaks_tool_bursts_without_changing_matches() {
         ToolCallItemInit, build_tool_burst_init,
     };
     let needle_tool = |item_index: usize, id: &str, name: &str| ToolCallItemInit {
+        model_run: None,
+        model_run_text: None,
         item_index,
         transcript_item_index: item_index as i64,
         session_id: "session-1".to_string(),

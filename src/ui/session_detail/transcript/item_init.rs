@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 
-use super::model_attribution::{ChildModels, HandoffCaption, handoff_caption};
+use super::model_attribution::{
+    ChildModels, CollapsedModelHint, HandoffCaption, ModelRunMarker, ModelRunText, handoff_caption,
+};
 use crate::models::{ContextPreview, MessagePreview, ReasoningPreview, Role, ToolCallStatus};
 
 #[derive(Clone)]
@@ -16,6 +18,8 @@ pub struct MessageItemInit {
     pub preview: MessagePreview,
     pub highlight_query: Option<String>,
     pub db_path: Arc<PathBuf>,
+    pub model_run: Option<ModelRunMarker>,
+    pub model_run_text: Option<ModelRunText>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +53,8 @@ pub struct ToolCallItemInit {
     pub highlight_query: Option<String>,
     /// Presence flags for associated reasoning attachment.
     pub reasoning_preview: ReasoningPreview,
+    pub model_run: Option<ModelRunMarker>,
+    pub model_run_text: Option<ModelRunText>,
 }
 
 impl ToolCallItemInit {
@@ -71,6 +77,10 @@ pub struct ToolBurstItemInit {
     pub visible_reasoning_child_count: usize,
     pub encrypted_only_child_count: usize,
     pub default_expanded: bool,
+    pub model_run: Option<ModelRunMarker>,
+    pub model_run_text: Option<ModelRunText>,
+    pub later_changes: Vec<ModelRunMarker>,
+    pub collapsed_model_hint: Option<CollapsedModelHint>,
 }
 
 #[derive(Clone)]
@@ -82,6 +92,8 @@ pub struct SubagentItemInit {
     pub title: String,
     pub reasoning_preview: ReasoningPreview,
     pub handoff: HandoffCaption,
+    pub model_run: Option<ModelRunMarker>,
+    pub model_run_text: Option<ModelRunText>,
 }
 
 #[derive(Clone)]
@@ -138,7 +150,7 @@ pub(crate) fn count_tool_call_matches(init: &ToolCallItemInit) -> usize {
 
 pub fn build_tool_burst_init(
     item_index: usize,
-    tool_calls: Vec<ToolCallItemInit>,
+    mut tool_calls: Vec<ToolCallItemInit>,
     default_expanded: bool,
 ) -> ToolBurstItemInit {
     let mut category_counts = BTreeMap::new();
@@ -148,6 +160,16 @@ pub fn build_tool_burst_init(
     let mut child_match_counts = Vec::new();
     let mut visible_reasoning_child_count = 0usize;
     let mut encrypted_only_child_count = 0usize;
+    let (model_run, model_run_text) = tool_calls
+        .first_mut()
+        .map(|first| (first.model_run.take(), first.model_run_text.take()))
+        .unwrap_or_default();
+    let later_changes: Vec<_> = tool_calls
+        .iter()
+        .skip(1)
+        .filter_map(|tool_call| tool_call.model_run.clone())
+        .collect();
+    let collapsed_model_hint = CollapsedModelHint::from_changes(&later_changes);
 
     for tool_call in &tool_calls {
         *category_counts
@@ -179,6 +201,10 @@ pub fn build_tool_burst_init(
         visible_reasoning_child_count,
         encrypted_only_child_count,
         default_expanded,
+        model_run,
+        model_run_text,
+        later_changes,
+        collapsed_model_hint,
     }
 }
 
@@ -196,6 +222,7 @@ fn transcript_item_init_from_row(
         highlight_query,
         db_path,
         &BTreeMap::new(),
+        None,
     )
 }
 
@@ -206,9 +233,11 @@ fn transcript_item_init_from_row_with_index(
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
     children: &BTreeMap<String, ChildModels>,
+    model_run: Option<ModelRunMarker>,
 ) -> TranscriptItemInit {
     use crate::models::{ToolCallStatus, TranscriptItemKind};
 
+    let model_run_text = model_run.as_ref().map(ModelRunText::from);
     match row.kind {
         TranscriptItemKind::Message => {
             let role = row.role.unwrap_or(Role::User);
@@ -234,6 +263,8 @@ fn transcript_item_init_from_row_with_index(
                 },
                 highlight_query,
                 db_path,
+                model_run,
+                model_run_text,
             })
         }
         TranscriptItemKind::ToolCall => TranscriptItemInit::ToolCall(ToolCallItemInit {
@@ -256,6 +287,8 @@ fn transcript_item_init_from_row_with_index(
             duration_ms: row.duration_ms,
             highlight_query,
             reasoning_preview: row.reasoning_preview,
+            model_run,
+            model_run_text,
         }),
         TranscriptItemKind::Subagent => TranscriptItemInit::Subagent(SubagentItemInit {
             item_index,
@@ -272,6 +305,8 @@ fn transcript_item_init_from_row_with_index(
                 row.subagent_child_session_id.as_deref(),
                 children,
             ),
+            model_run,
+            model_run_text,
         }),
         TranscriptItemKind::Context => match row.context.clone() {
             Some(preview) => TranscriptItemInit::Context(ContextItemInit {
@@ -323,6 +358,8 @@ fn empty_message_init(
         },
         highlight_query,
         db_path,
+        model_run: None,
+        model_run_text: None,
     })
 }
 
@@ -333,6 +370,7 @@ pub fn transcript_item_init_from_display_item(
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
     children: &BTreeMap<String, ChildModels>,
+    model_runs: &mut BTreeMap<i64, ModelRunMarker>,
 ) -> TranscriptItemInit {
     match item {
         crate::ui::session_detail::transcript::display::DisplayTranscriptItem::Single(row) => {
@@ -343,6 +381,7 @@ pub fn transcript_item_init_from_display_item(
                 highlight_query,
                 db_path,
                 children,
+                model_runs.remove(&row.item_index),
             )
         }
         crate::ui::session_detail::transcript::display::DisplayTranscriptItem::ToolBurst(burst) => {
@@ -357,6 +396,7 @@ pub fn transcript_item_init_from_display_item(
                         highlight_query.clone(),
                         db_path.clone(),
                         children,
+                        model_runs.remove(&row.item_index),
                     ) {
                         TranscriptItemInit::ToolCall(tool_call) => Some(tool_call),
                         other => {
@@ -431,6 +471,8 @@ mod tests {
     #[test]
     fn tool_call_match_count_uses_only_displayed_preview() {
         let with_preview = ToolCallItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 7,
             transcript_item_index: 7,
             session_id: "session-1".to_string(),
@@ -446,6 +488,8 @@ mod tests {
         assert_eq!(count_tool_call_matches(&with_preview), 1);
 
         let with_summary_fallback = ToolCallItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 8,
             transcript_item_index: 8,
             session_id: "session-1".to_string(),
@@ -465,6 +509,8 @@ mod tests {
     fn tool_burst_item_init_aggregates_categories_duration_errors_and_matches() {
         let tool_calls = vec![
             ToolCallItemInit {
+                model_run: None,
+                model_run_text: None,
                 item_index: 1,
                 transcript_item_index: 1,
                 session_id: "session-1".to_string(),
@@ -478,6 +524,8 @@ mod tests {
                 reasoning_preview: ReasoningPreview::default(),
             },
             ToolCallItemInit {
+                model_run: None,
+                model_run_text: None,
                 item_index: 2,
                 transcript_item_index: 2,
                 session_id: "session-1".to_string(),
@@ -522,6 +570,7 @@ mod tests {
             None,
             Arc::new(PathBuf::from("/tmp/test.db")),
             &BTreeMap::new(),
+            &mut BTreeMap::new(),
         );
 
         let TranscriptItemInit::ToolBurst(burst_init) = init else {

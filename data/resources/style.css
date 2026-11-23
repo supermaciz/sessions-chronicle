@@ -194,6 +194,14 @@
   opacity: 0.7;
 }
 
+.model-run-marker {
+  margin: 2px 8px;
+}
+
+.model-run-marker separator {
+  opacity: 0.5;
+}
+
 /* Inline transcript rows for tool calls and subagents */
 .tool-call-row {
   padding: 2px 8px;

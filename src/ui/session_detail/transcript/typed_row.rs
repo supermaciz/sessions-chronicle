@@ -6,6 +6,8 @@ use gtk::prelude::*;
 use relm4::binding::Binding;
 use relm4::{adw, gtk, typed_view::list::RelmListItem};
 
+use super::model_run_widget::ModelRunWidgets;
+
 use crate::icon_names;
 use crate::models::{Role, tool_name_icon};
 use crate::ui::format::format_duration_ms;
@@ -49,6 +51,7 @@ pub struct TranscriptRowWidgets {
 
 pub struct MessagePageWidgets {
     root: gtk::Box,
+    model_run: ModelRunWidgets,
     role_label: gtk::Label,
     model_sep: gtk::Label,
     model_label: gtk::Label,
@@ -63,23 +66,28 @@ pub struct MessagePageWidgets {
 
 pub struct ToolCallPageWidgets {
     root: gtk::Box,
+    model_run: ModelRunWidgets,
     connected_handlers: Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>,
 }
 
 pub struct ToolBurstPageWidgets {
     root: gtk::Box,
+    model_run: ModelRunWidgets,
     header_button: gtk::Button,
     arrow_icon: gtk::Image,
     header_wrap: adw::WrapBox,
+    model_hint: gtk::Label,
     revealer: gtk::Revealer,
     children: gtk::Box,
     reveal_binding: Option<gtk::glib::Binding>,
+    model_hint_binding: Option<gtk::glib::Binding>,
     children_built_for: Rc<Cell<Option<usize>>>,
     connected_handlers: Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>,
 }
 
 pub struct SubagentPageWidgets {
     root: gtk::Box,
+    model_run: ModelRunWidgets,
     connected_handlers: Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>,
 }
 
@@ -172,6 +180,11 @@ impl TranscriptItemData {
             return;
         };
 
+        widgets.model_run.bind(
+            &widgets.root,
+            message.model_run.as_ref(),
+            message.model_run_text.as_ref(),
+        );
         Self::bind_message_header(widgets, message);
         self.bind_message_reasoning(widgets, message);
         self.render_message_body_and_bind_revision(widgets, message);
@@ -337,7 +350,12 @@ impl TranscriptItemData {
             return;
         };
 
-        clear_box_children(&widgets.root);
+        remove_transient_page_content(&widgets.root, &widgets.model_run);
+        widgets.model_run.bind(
+            &widgets.root,
+            tool_call.model_run.as_ref(),
+            tool_call.model_run_text.as_ref(),
+        );
         let refs = build_tool_call_page_content(tool_call, self.highlight_query.as_deref());
 
         if let Some(reasoning_button) = refs.reasoning_button {
@@ -368,7 +386,32 @@ impl TranscriptItemData {
             return;
         };
 
+        widgets.model_run.bind(
+            &widgets.root,
+            burst.model_run.as_ref(),
+            burst.model_run_text.as_ref(),
+        );
+        widgets.clear_model_hint();
         rebuild_tool_burst_header(&widgets.header_wrap, burst);
+        widgets.header_wrap.append(&widgets.model_hint);
+        if let Some((last_change, hint)) = burst
+            .later_changes
+            .last()
+            .zip(burst.collapsed_model_hint.as_ref())
+        {
+            widgets.model_hint.set_label(&hint.caption);
+            widgets.model_hint.set_tooltip_text(Some(&hint.tooltip));
+            if last_change.model.is_some() {
+                widgets.model_hint.add_css_class("monospace");
+            }
+            widgets.model_hint_binding = Some(
+                self.expanded
+                    .bind_property("value", &widgets.model_hint, "visible")
+                    .invert_boolean()
+                    .sync_create()
+                    .build(),
+            );
+        }
         widgets
             .header_button
             .update_property(&[gtk::accessible::Property::Label(
@@ -445,7 +488,12 @@ impl TranscriptItemData {
             return;
         };
 
-        clear_box_children(&widgets.root);
+        remove_transient_page_content(&widgets.root, &widgets.model_run);
+        widgets.model_run.bind(
+            &widgets.root,
+            subagent.model_run.as_ref(),
+            subagent.model_run_text.as_ref(),
+        );
         let refs = build_subagent_page_content(subagent);
 
         if let Some(reasoning_button) = refs.reasoning_button {
@@ -473,6 +521,7 @@ impl TranscriptItemData {
 
     pub(crate) fn unbind_message_page(&self, widgets: &mut MessagePageWidgets) {
         disconnect_handlers(&mut widgets.connected_handlers);
+        widgets.model_run.clear(&widgets.root);
         clear_box_children(&widgets.reasoning_box);
         clear_box_children(&widgets.content);
         widgets.expand_button.set_visible(false);
@@ -489,7 +538,8 @@ impl TranscriptItemData {
 
     pub(crate) fn unbind_tool_call_page(&self, widgets: &mut ToolCallPageWidgets) {
         disconnect_handlers(&mut widgets.connected_handlers);
-        clear_box_children(&widgets.root);
+        widgets.model_run.clear(&widgets.root);
+        remove_transient_page_content(&widgets.root, &widgets.model_run);
     }
 
     pub(crate) fn unbind_tool_burst_page(&self, widgets: &mut ToolBurstPageWidgets) {
@@ -497,6 +547,8 @@ impl TranscriptItemData {
         if let Some(binding) = widgets.reveal_binding.take() {
             binding.unbind();
         }
+        widgets.model_run.clear(&widgets.root);
+        widgets.clear_model_hint();
         widgets.header_wrap.remove_all();
         clear_box_children(&widgets.children);
         widgets.children_built_for.set(None);
@@ -509,7 +561,26 @@ impl TranscriptItemData {
 
     pub(crate) fn unbind_subagent_page(&self, widgets: &mut SubagentPageWidgets) {
         disconnect_handlers(&mut widgets.connected_handlers);
-        clear_box_children(&widgets.root);
+        widgets.model_run.clear(&widgets.root);
+        remove_transient_page_content(&widgets.root, &widgets.model_run);
+    }
+}
+
+impl ToolBurstPageWidgets {
+    fn clear_model_hint(&mut self) {
+        if let Some(binding) = self.model_hint_binding.take() {
+            binding.unbind();
+        }
+        self.model_hint.set_visible(false);
+        self.model_hint.set_label("");
+        self.model_hint.set_tooltip_text(None);
+        self.model_hint.remove_css_class("monospace");
+    }
+}
+
+fn remove_transient_page_content(root: &gtk::Box, model_run: &ModelRunWidgets) {
+    if let Some(content) = model_run.root.next_sibling() {
+        root.remove(&content);
     }
 }
 
@@ -541,6 +612,7 @@ fn build_message_page() -> MessagePageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("message-row");
     root.set_spacing(4);
+    let model_run = ModelRunWidgets::prepend_to(&root);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
 
@@ -616,6 +688,7 @@ fn build_message_page() -> MessagePageWidgets {
 
     MessagePageWidgets {
         root,
+        model_run,
         role_label,
         model_sep,
         model_label,
@@ -761,6 +834,7 @@ fn set_role_css_class(widget: &impl IsA<gtk::Widget>, role: Role) {
 fn build_tool_call_page() -> ToolCallPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     ToolCallPageWidgets {
+        model_run: ModelRunWidgets::prepend_to(&root),
         root,
         connected_handlers: Vec::new(),
     }
@@ -769,6 +843,7 @@ fn build_tool_call_page() -> ToolCallPageWidgets {
 fn build_tool_burst_page() -> ToolBurstPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("tool-call-group");
+    let model_run = ModelRunWidgets::prepend_to(&root);
 
     let header_button = gtk::Button::new();
     header_button.add_css_class("flat");
@@ -790,6 +865,11 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
     header_wrap.set_line_spacing(4);
     header_wrap.set_hexpand(true);
     header_wrap.add_css_class("tool-call-group-header");
+    let model_hint = gtk::Label::new(None);
+    model_hint.add_css_class("caption");
+    model_hint.add_css_class("dim-label");
+    model_hint.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    model_hint.set_visible(false);
     header_row.append(&header_wrap);
     header_button.set_child(Some(&header_row));
     root.append(&header_button);
@@ -802,12 +882,15 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
 
     ToolBurstPageWidgets {
         root,
+        model_run,
         header_button,
         arrow_icon,
         header_wrap,
+        model_hint,
         revealer,
         children,
         reveal_binding: None,
+        model_hint_binding: None,
         children_built_for: Rc::new(Cell::new(None)),
         connected_handlers: Vec::new(),
     }
@@ -816,6 +899,7 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
 fn build_subagent_page() -> SubagentPageWidgets {
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     SubagentPageWidgets {
+        model_run: ModelRunWidgets::prepend_to(&root),
         root,
         connected_handlers: Vec::new(),
     }
@@ -1091,6 +1175,8 @@ mod tests {
 
     fn message_init() -> MessageItemInit {
         MessageItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 1,
             transcript_item_index: 11,
             preview: MessagePreview {
@@ -1126,6 +1212,8 @@ mod tests {
 
     fn tool_call_init() -> ToolCallItemInit {
         ToolCallItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 2,
             transcript_item_index: 12,
             session_id: "session-1".to_string(),
@@ -1142,6 +1230,8 @@ mod tests {
 
     fn subagent_init() -> SubagentItemInit {
         SubagentItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 3,
             transcript_item_index: 13,
             session_id: "session-1".to_string(),
@@ -1202,6 +1292,10 @@ mod tests {
 
     fn tool_burst_init(default_expanded: bool) -> ToolBurstItemInit {
         ToolBurstItemInit {
+            model_run: None,
+            model_run_text: None,
+            later_changes: Vec::new(),
+            collapsed_model_hint: None,
             item_index: 4,
             tool_calls: vec![tool_call_init()],
             category_counts: vec![("Read".to_string(), 1)],
@@ -1227,6 +1321,7 @@ mod tests {
 
     fn tool_burst_header_button(root: &gtk::Box) -> gtk::Button {
         root.first_child()
+            .and_then(|marker| marker.next_sibling())
             .expect("tool burst header button")
             .downcast::<gtk::Button>()
             .expect("tool burst header button")
@@ -1250,6 +1345,7 @@ mod tests {
     fn message_reasoning_button(root: &gtk::Box) -> gtk::Button {
         let header = root
             .first_child()
+            .and_then(|marker| marker.next_sibling())
             .expect("message header")
             .downcast::<gtk::Box>()
             .expect("message header box");
@@ -1279,6 +1375,7 @@ mod tests {
     fn message_raw_toggle(root: &gtk::Box) -> gtk::ToggleButton {
         let header = root
             .first_child()
+            .and_then(|marker| marker.next_sibling())
             .expect("message header")
             .downcast::<gtk::Box>()
             .expect("message header box");
@@ -1322,18 +1419,7 @@ mod tests {
                 TranscriptRowBuildKind::ToolCall,
             ),
             (
-                TranscriptItemKind::ToolBurst(ToolBurstItemInit {
-                    item_index: 4,
-                    tool_calls: vec![tool_call_init()],
-                    category_counts: vec![("Read".to_string(), 1)],
-                    error_count: 0,
-                    total_duration_ms: Some(15),
-                    match_count: 2,
-                    child_match_counts: vec![2],
-                    visible_reasoning_child_count: 0,
-                    encrypted_only_child_count: 0,
-                    default_expanded: false,
-                }),
+                TranscriptItemKind::ToolBurst(tool_burst_init(false)),
                 TranscriptRowBuildKind::ToolBurst,
             ),
             (
@@ -1364,18 +1450,7 @@ mod tests {
             sender.clone(),
         );
         let mut tool_burst = TranscriptItemData::from_init(
-            TranscriptItemInit::ToolBurst(ToolBurstItemInit {
-                item_index: 4,
-                tool_calls: vec![tool_call_init()],
-                category_counts: vec![("Read".to_string(), 1)],
-                error_count: 0,
-                total_duration_ms: Some(15),
-                match_count: 2,
-                child_match_counts: vec![2],
-                visible_reasoning_child_count: 0,
-                encrypted_only_child_count: 0,
-                default_expanded: false,
-            }),
+            TranscriptItemInit::ToolBurst(tool_burst_init(false)),
             sender.clone(),
         );
         let mut subagent = TranscriptItemData::from_init(
@@ -1775,7 +1850,7 @@ mod tests {
         let row = widgets
             .tool_call
             .root
-            .first_child()
+            .last_child()
             .expect("tool call content")
             .downcast::<gtk::Box>()
             .expect("tool call content box")
@@ -1813,7 +1888,7 @@ mod tests {
         let content = widgets
             .tool_call
             .root
-            .first_child()
+            .last_child()
             .expect("tool call content")
             .downcast::<gtk::Box>()
             .expect("tool call content box");
@@ -1882,7 +1957,7 @@ mod tests {
         let row = widgets
             .tool_call
             .root
-            .first_child()
+            .last_child()
             .expect("tool call content")
             .downcast::<gtk::Box>()
             .expect("tool call content box")
@@ -1945,7 +2020,7 @@ mod tests {
         let row = widgets
             .subagent
             .root
-            .first_child()
+            .last_child()
             .expect("subagent content")
             .downcast::<gtk::Box>()
             .expect("subagent row box");
@@ -1993,7 +2068,7 @@ mod tests {
         let row = widgets
             .subagent
             .root
-            .first_child()
+            .last_child()
             .expect("subagent content")
             .downcast::<gtk::Box>()
             .expect("subagent row box");
@@ -2026,7 +2101,7 @@ mod tests {
         let content = widgets
             .tool_call
             .root
-            .first_child()
+            .last_child()
             .expect("tool call content")
             .downcast::<gtk::Box>()
             .expect("tool call content box");

@@ -1,7 +1,130 @@
 use std::collections::BTreeMap;
 
-use crate::database::SessionModels;
+use crate::database::{SessionModels, TranscriptItemRow};
+use crate::models::{Role, TranscriptItemKind};
 use relm4::gtk;
+
+const MODEL_NOT_RECORDED: &str = "model not recorded";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelRunMarker {
+    pub model: Option<String>,
+    pub previous: Option<String>,
+}
+
+impl ModelRunMarker {
+    pub fn caption(&self) -> &str {
+        self.model.as_deref().unwrap_or(MODEL_NOT_RECORDED)
+    }
+}
+
+/// Display strings prepared before a row is bound.
+#[derive(Clone, Debug)]
+pub struct ModelRunText {
+    pub previous_markup: Option<String>,
+    pub description: String,
+}
+
+impl From<&ModelRunMarker> for ModelRunText {
+    fn from(marker: &ModelRunMarker) -> Self {
+        let caption = marker.caption();
+        Self {
+            previous_markup: marker
+                .previous
+                .as_deref()
+                .map(|model| format!("from <tt>{}</tt>", gtk::glib::markup_escape_text(model))),
+            description: match &marker.previous {
+                Some(previous) => format!("Model changed to {caption} from {previous}"),
+                None => format!("Model: {caption}"),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CollapsedModelHint {
+    pub caption: String,
+    pub tooltip: String,
+}
+
+impl CollapsedModelHint {
+    pub fn from_changes(changes: &[ModelRunMarker]) -> Option<Self> {
+        let last = changes.last()?;
+        Some(Self {
+            caption: format!("→ {}", last.caption()),
+            tooltip: changes
+                .iter()
+                .map(ModelRunMarker::caption)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        })
+    }
+}
+
+fn recorded_model(value: Option<&str>) -> Option<&str> {
+    value.filter(|model| !model.trim().is_empty())
+}
+
+/// Compute markers over all loaded rows, ordered by `item_index`.
+pub fn model_run_markers(rows: &[TranscriptItemRow]) -> BTreeMap<i64, ModelRunMarker> {
+    let mut known_assistant_message = false;
+    let mut saw_call_or_delegation = false;
+    let mut known_call_or_delegation = false;
+    for row in rows {
+        match row.kind {
+            TranscriptItemKind::Message if row.role == Some(Role::Assistant) => {
+                known_assistant_message |= recorded_model(row.model.as_deref()).is_some();
+            }
+            TranscriptItemKind::ToolCall => {
+                saw_call_or_delegation = true;
+                known_call_or_delegation |=
+                    recorded_model(row.tool_call_model.as_deref()).is_some();
+            }
+            TranscriptItemKind::Subagent => {
+                saw_call_or_delegation = true;
+                known_call_or_delegation |=
+                    recorded_model(row.subagent_source_model.as_deref()).is_some();
+            }
+            _ => {}
+        }
+    }
+    if !known_assistant_message && !known_call_or_delegation {
+        return BTreeMap::new();
+    }
+    let pre_attribution =
+        known_assistant_message && saw_call_or_delegation && !known_call_or_delegation;
+
+    let mut markers = BTreeMap::new();
+    // The outer option tracks whether a run has started; the inner option is
+    // its model, which can be NULL.
+    let mut run = None;
+    for row in rows {
+        let model = recorded_model(match row.kind {
+            TranscriptItemKind::Message if row.role == Some(Role::Assistant) => {
+                row.model.as_deref()
+            }
+            TranscriptItemKind::ToolCall if !pre_attribution => row.tool_call_model.as_deref(),
+            TranscriptItemKind::Subagent if !pre_attribution => {
+                row.subagent_source_model.as_deref()
+            }
+            _ => continue,
+        });
+        if run == Some(model) {
+            continue;
+        }
+        if run.is_some() || model.is_some() {
+            markers.insert(
+                row.item_index,
+                ModelRunMarker {
+                    model: model.map(str::to_string),
+                    previous: run.flatten().map(str::to_string),
+                },
+            );
+        }
+        run = Some(model);
+    }
+    markers
+}
 
 #[derive(Clone, Debug)]
 pub enum ChildModels {

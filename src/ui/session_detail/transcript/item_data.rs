@@ -193,6 +193,8 @@ mod tests {
             reasoning_preview: ReasoningPreview::default(),
         };
         let init = MessageItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 7,
             transcript_item_index: 42,
             preview: preview.clone(),
@@ -232,6 +234,8 @@ mod tests {
         };
 
         let tool_call = ToolCallItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 1,
             transcript_item_index: 10,
             session_id: "session-1".to_string(),
@@ -280,6 +284,8 @@ mod tests {
     #[test]
     fn cloned_data_shares_expansion_binding() {
         let init = MessageItemInit {
+            model_run: None,
+            model_run_text: None,
             item_index: 2,
             transcript_item_index: 8,
             preview: MessagePreview {
