@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 
+use super::model_attribution::{ChildModels, HandoffCaption, handoff_caption};
 use crate::models::{ContextPreview, MessagePreview, ReasoningPreview, Role, ToolCallStatus};
 
 #[derive(Clone)]
@@ -80,6 +81,7 @@ pub struct SubagentItemInit {
     pub subagent_id: String,
     pub title: String,
     pub reasoning_preview: ReasoningPreview,
+    pub handoff: HandoffCaption,
 }
 
 #[derive(Clone)]
@@ -193,6 +195,7 @@ fn transcript_item_init_from_row(
         session_id,
         highlight_query,
         db_path,
+        &BTreeMap::new(),
     )
 }
 
@@ -202,6 +205,7 @@ fn transcript_item_init_from_row_with_index(
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
+    children: &BTreeMap<String, ChildModels>,
 ) -> TranscriptItemInit {
     use crate::models::{ToolCallStatus, TranscriptItemKind};
 
@@ -263,6 +267,11 @@ fn transcript_item_init_from_row_with_index(
                 .clone()
                 .unwrap_or_else(|| "Subagent".to_string()),
             reasoning_preview: row.reasoning_preview,
+            handoff: handoff_caption(
+                row.subagent_source_model.as_deref(),
+                row.subagent_child_session_id.as_deref(),
+                children,
+            ),
         }),
         TranscriptItemKind::Context => match row.context.clone() {
             Some(preview) => TranscriptItemInit::Context(ContextItemInit {
@@ -323,6 +332,7 @@ pub fn transcript_item_init_from_display_item(
     session_id: &str,
     highlight_query: Option<String>,
     db_path: Arc<PathBuf>,
+    children: &BTreeMap<String, ChildModels>,
 ) -> TranscriptItemInit {
     match item {
         crate::ui::session_detail::transcript::display::DisplayTranscriptItem::Single(row) => {
@@ -332,6 +342,7 @@ pub fn transcript_item_init_from_display_item(
                 session_id,
                 highlight_query,
                 db_path,
+                children,
             )
         }
         crate::ui::session_detail::transcript::display::DisplayTranscriptItem::ToolBurst(burst) => {
@@ -345,6 +356,7 @@ pub fn transcript_item_init_from_display_item(
                         session_id,
                         highlight_query.clone(),
                         db_path.clone(),
+                        children,
                     ) {
                         TranscriptItemInit::ToolCall(tool_call) => Some(tool_call),
                         other => {
@@ -509,6 +521,7 @@ mod tests {
             "session-1",
             None,
             Arc::new(PathBuf::from("/tmp/test.db")),
+            &BTreeMap::new(),
         );
 
         let TranscriptItemInit::ToolBurst(burst_init) = init else {

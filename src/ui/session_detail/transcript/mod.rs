@@ -11,10 +11,14 @@ pub(crate) mod context_row;
 pub(crate) mod display;
 pub(crate) mod item_data;
 pub(crate) mod item_init;
+pub(crate) mod model_attribution;
 pub(crate) mod row_rendering;
 pub(crate) mod tool_call_row;
 pub(crate) mod tool_preview;
 pub(crate) mod typed_row;
+
+#[cfg(test)]
+mod model_handoff_tests;
 
 fn disconnect_handlers(handlers: &mut Vec<(gtk::glib::Object, gtk::glib::SignalHandlerId)>) {
     while let Some((object, id)) = handlers.pop() {

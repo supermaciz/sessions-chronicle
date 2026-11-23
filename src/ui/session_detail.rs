@@ -16,7 +16,7 @@ use relm4::{
 
 use crate::database::{
     MatchPosition, SessionModels, TranscriptItemRow, find_session_match_positions,
-    load_all_transcript_items, load_context_full_content, load_message_full_content,
+    load_all_transcript_items, load_context_full_content, load_message_full_content, load_session,
     load_session_models,
 };
 use crate::models::Session;
@@ -27,6 +27,7 @@ use crate::ui::session_detail::transcript::item_data::{TranscriptItemData, Trans
 use crate::ui::session_detail::transcript::item_init::{
     TranscriptItemInit, TranscriptRowBuildKind, transcript_item_init_from_display_item,
 };
+use crate::ui::session_detail::transcript::model_attribution::{ChildModels, collect_child_models};
 use crate::ui::session_detail::transcript::typed_row::TRANSCRIPT_ROW_WIDGET_NAME_PREFIX;
 use crate::ui::tool_inspector_pane::{
     ToolInspectorPane, ToolInspectorPaneMsg, ToolInspectorPaneOutput,
@@ -197,6 +198,7 @@ pub enum SessionDetailMsg {
 pub struct LoadedTranscript {
     rows: Vec<TranscriptItemRow>,
     models: SessionModels,
+    children: BTreeMap<String, ChildModels>,
 }
 
 pub enum SessionDetailCmd {
@@ -1317,6 +1319,7 @@ impl SessionDetail {
         matched_item_indexes: &BTreeSet<i64>,
         db_path: Arc<PathBuf>,
         base_display_index: usize,
+        children: &BTreeMap<String, ChildModels>,
     ) -> PreparedTranscriptItems {
         let mut items = Vec::new();
         let mut display_targets_by_item_index = BTreeMap::new();
@@ -1342,6 +1345,7 @@ impl SessionDetail {
                 session_id,
                 item_highlight,
                 db_path.clone(),
+                children,
             ));
         }
 
@@ -1469,7 +1473,32 @@ impl SessionDetail {
                         );
                         SessionModels::default()
                     });
-                    LoadedTranscript { rows, models }
+                    let children = collect_child_models(
+                        rows.iter()
+                            .filter_map(|row| row.subagent_child_session_id.as_deref()),
+                        |child_id| {
+                            let result =
+                                load_session(&db_path, child_id).and_then(
+                                    |session| match session {
+                                        None => Ok(ChildModels::NotIndexed),
+                                        Some(_) => load_session_models(&db_path, child_id)
+                                            .map(ChildModels::Indexed),
+                                    },
+                                );
+                            result.unwrap_or_else(|err| {
+                                tracing::warn!(
+                                    child_id,
+                                    "Failed to load child model usage: {err:#}"
+                                );
+                                ChildModels::Unavailable
+                            })
+                        },
+                    );
+                    LoadedTranscript {
+                        rows,
+                        models,
+                        children,
+                    }
                 })
                 .map_err(|err| format!("{err:#}"));
             let load_duration_ms = started_at.elapsed().as_millis();
@@ -1489,6 +1518,7 @@ impl SessionDetail {
         request_id: u64,
         session_id: &str,
         rows: Vec<crate::database::TranscriptItemRow>,
+        children: BTreeMap<String, ChildModels>,
     ) {
         self.transcript.loading = false;
         self.transcript.loaded_count = rows.len();
@@ -1505,6 +1535,7 @@ impl SessionDetail {
             &matched_item_indexes,
             db_path,
             0,
+            &children,
         );
         let display_item_count = prepared.items.len();
         self.extend_display_targets(prepared.display_targets_by_item_index);
@@ -1671,7 +1702,11 @@ impl SessionDetail {
         }
 
         match result {
-            Ok(LoadedTranscript { rows, models }) => {
+            Ok(LoadedTranscript {
+                rows,
+                models,
+                children,
+            }) => {
                 tracing::info!(
                     request_id,
                     session_id = session_id.as_str(),
@@ -1679,7 +1714,7 @@ impl SessionDetail {
                     load_duration_ms,
                     "Loaded transcript"
                 );
-                self.apply_transcript_rows(sender, request_id, &session_id, rows);
+                self.apply_transcript_rows(sender, request_id, &session_id, rows, children);
                 self.pending_summary_models.set(Some(models));
             }
             Err(err) => self.handle_transcript_page_error(&session_id, err),

@@ -298,6 +298,61 @@ fn transcript_subagent_row(item_index: i64, title: &str) -> crate::database::Tra
     }
 }
 
+#[test]
+fn model_handoff_two_rows_share_one_child_lookup_and_keep_their_sources() {
+    use super::transcript::model_attribution::{ChildModels, collect_child_models};
+    let mut first = transcript_subagent_row(0, "First");
+    first.subagent_child_session_id = Some("child".into());
+    first.subagent_source_model = Some("A<&".into());
+    let mut second = transcript_subagent_row(1, "Second");
+    second.subagent_child_session_id = Some("child".into());
+    let rows = vec![first, second];
+    let mut child_reads = Vec::new();
+    let children = collect_child_models(
+        rows.iter()
+            .filter_map(|row| row.subagent_child_session_id.as_deref()),
+        |id| {
+            child_reads.push(id.to_string());
+            ChildModels::Indexed(SessionModels {
+                models: ["B", "C"]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, model)| crate::database::SessionModelUsage {
+                        model: (*model).into(),
+                        entry_count: 1,
+                        first_item_index: i as i64,
+                        first_used_at: None,
+                    })
+                    .collect(),
+                unattributed_count: 0,
+            })
+        },
+    );
+    assert_eq!(child_reads, ["child"]);
+    let prepared = SessionDetail::build_display_items(
+        rows,
+        "parent",
+        None,
+        &Default::default(),
+        Arc::new(PathBuf::from("/tmp/test.db")),
+        0,
+        &children,
+    );
+    let [
+        TranscriptItemInit::Subagent(first),
+        TranscriptItemInit::Subagent(second),
+    ] = prepared.items.as_slice()
+    else {
+        panic!("expected two subagents");
+    };
+    assert_eq!(first.handoff.plain, "requested by A<& · ran B +1");
+    assert!(first.handoff.markup.contains("<tt>A&lt;&amp;</tt>"));
+    assert_eq!(
+        second.handoff.tooltip,
+        "requested by: not recorded · ran B, C"
+    );
+}
+
 fn transcript_context_row(
     item_index: i64,
     context_id: &str,
@@ -426,6 +481,7 @@ fn build_display_items_groups_two_tool_calls_into_one_tool_burst() {
         &matched_item_indexes,
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
 
     assert_eq!(prepared.items.len(), 2);
@@ -477,6 +533,7 @@ fn build_display_items_limits_search_highlight_to_navigable_matches() {
         &matched_item_indexes,
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
 
     match &prepared.items[0] {
@@ -1246,6 +1303,7 @@ fn message_full_content_target_rejects_stale_session_or_message() {
         &BTreeSet::new(),
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
     let item = TranscriptItemData::from_init(
         prepared.items.into_iter().next().expect("message item"),
@@ -1286,6 +1344,7 @@ fn message_full_content_success_clears_raw_pending_state() {
         &BTreeSet::new(),
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
     let item = TranscriptItemData::from_init(
         prepared.items.into_iter().next().expect("message item"),
@@ -1318,6 +1377,7 @@ fn message_full_content_failure_resets_expansion_and_raw_state() {
         &BTreeSet::new(),
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
     let item = TranscriptItemData::from_init(
         prepared.items.into_iter().next().expect("message item"),
@@ -1457,6 +1517,7 @@ fn context_breaks_tool_bursts_without_changing_matches() {
         &matched_item_indexes,
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
 
     let with_context = SessionDetail::build_display_items(
@@ -1471,6 +1532,7 @@ fn context_breaks_tool_bursts_without_changing_matches() {
         &matched_item_indexes,
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
 
     // Navigable message identity is unchanged by the inserted context row.
@@ -1552,6 +1614,7 @@ fn context_full_content_target_rejects_stale_session_or_context() {
         &BTreeSet::new(),
         Arc::new(PathBuf::from("/tmp/test.db")),
         0,
+        &Default::default(),
     );
     let item = TranscriptItemData::from_init(
         prepared.items.into_iter().next().expect("context item"),

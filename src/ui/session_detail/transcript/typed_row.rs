@@ -908,26 +908,31 @@ struct SubagentPageContentRefs {
 fn build_subagent_page_content(
     init: &crate::ui::session_detail::transcript::item_init::SubagentItemInit,
 ) -> SubagentPageContentRefs {
-    let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("subagent-row");
     root.set_margin_start(8);
     root.set_margin_end(4);
     root.set_margin_top(4);
     root.set_margin_bottom(4);
+    root.update_property(&[gtk::accessible::Property::Label(&format!(
+        "{} · {}",
+        init.title, init.handoff.plain
+    ))]);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
 
     let icon = gtk::Image::new();
     icon.set_icon_name(Some(TOOL_ICONS.agent));
     icon.set_pixel_size(16);
-    root.append(&icon);
+    row.append(&icon);
 
     let title = gtk::Label::new(Some(&init.title));
     title.set_halign(gtk::Align::Start);
     title.set_hexpand(false);
     title.set_xalign(0.0);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    root.append(&title);
+    row.append(&title);
 
-    let reasoning_button = append_reasoning_pill(&root, &init.reasoning_preview);
+    let reasoning_button = append_reasoning_pill(&row, &init.reasoning_preview);
 
     let inspect = gtk::Button::new();
     inspect.set_icon_name("view-reveal-symbolic");
@@ -936,8 +941,18 @@ fn build_subagent_page_content(
 
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
-    root.append(&spacer);
-    root.append(&inspect);
+    row.append(&spacer);
+    row.append(&inspect);
+    root.append(&row);
+    let caption = gtk::Label::new(None);
+    caption.add_css_class("caption");
+    caption.add_css_class("dim-label");
+    caption.set_halign(gtk::Align::Start);
+    caption.set_xalign(0.0);
+    caption.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    caption.set_markup(&init.handoff.markup);
+    caption.set_tooltip_text(Some(&init.handoff.tooltip));
+    root.append(&caption);
 
     SubagentPageContentRefs {
         root,
@@ -1133,7 +1148,41 @@ mod tests {
             subagent_id: "agent-1".to_string(),
             title: "Explore".to_string(),
             reasoning_preview: ReasoningPreview::default(),
+            handoff: crate::ui::session_detail::transcript::model_attribution::handoff_caption(
+                None,
+                None,
+                &Default::default(),
+            ),
         }
+    }
+
+    #[gtk::test]
+    fn model_handoff_caption_widget_shows_plain_tooltip_and_accessibility() {
+        use crate::ui::session_detail::transcript::model_attribution::handoff_caption;
+        use gtk::glib::translate::{ToGlibPtr, from_glib_full};
+        let mut init = subagent_init();
+        init.handoff = handoff_caption(Some("A<&"), None, &Default::default());
+        let refs = super::build_subagent_page_content(&init);
+        let caption = refs
+            .root
+            .last_child()
+            .unwrap()
+            .downcast::<gtk::Label>()
+            .unwrap();
+        let expected = "requested by A<& · no linked child session";
+        assert_eq!(caption.text(), expected);
+        assert_eq!(caption.tooltip_text().as_deref(), Some(expected));
+        let accessible: &gtk::Accessible = refs.root.upcast_ref();
+        // SAFETY: GTK expects a NUL-terminated label string for this property.
+        let mismatch = unsafe {
+            let result = gtk::ffi::gtk_test_accessible_check_property(
+                accessible.to_glib_none().0,
+                gtk::ffi::GTK_ACCESSIBLE_PROPERTY_LABEL,
+                c"Explore · requested by A<& · no linked child session".as_ptr(),
+            );
+            (!result.is_null()).then(|| from_glib_full::<_, gtk::glib::GString>(result))
+        };
+        assert_eq!(mismatch, None);
     }
 
     fn context_init() -> ContextItemInit {
@@ -1900,6 +1949,7 @@ mod tests {
             .expect("subagent content")
             .downcast::<gtk::Box>()
             .expect("subagent row box");
+        let row = row.first_child().unwrap().downcast::<gtk::Box>().unwrap();
         let children = collect_box_children(&row);
 
         assert!(
@@ -1947,6 +1997,7 @@ mod tests {
             .expect("subagent content")
             .downcast::<gtk::Box>()
             .expect("subagent row box");
+        let row = row.first_child().unwrap().downcast::<gtk::Box>().unwrap();
         let title_label = collect_box_children(&row)[1]
             .clone()
             .downcast::<gtk::Label>()
