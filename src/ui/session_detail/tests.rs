@@ -306,6 +306,7 @@ fn model_handoff_two_rows_share_one_child_lookup_and_keep_their_sources() {
     first.subagent_source_model = Some("A<&".into());
     let mut second = transcript_subagent_row(1, "Second");
     second.subagent_child_session_id = Some("child".into());
+    second.subagent_source_model = Some("D>&".into());
     let rows = vec![first, second];
     let mut child_reads = Vec::new();
     let children = collect_child_models(
@@ -346,11 +347,16 @@ fn model_handoff_two_rows_share_one_child_lookup_and_keep_their_sources() {
         panic!("expected two subagents");
     };
     assert_eq!(first.handoff.plain, "requested by A<& · ran B +1");
-    assert!(first.handoff.markup.contains("<tt>A&lt;&amp;</tt>"));
     assert_eq!(
-        second.handoff.tooltip,
-        "requested by: not recorded · ran B, C"
+        first.handoff.markup,
+        "requested by <tt>A&lt;&amp;</tt> · ran <tt>B</tt> +1"
     );
+    assert_eq!(second.handoff.plain, "requested by D>& · ran B +1");
+    assert_eq!(
+        second.handoff.markup,
+        "requested by <tt>D&gt;&amp;</tt> · ran <tt>B</tt> +1"
+    );
+    assert_eq!(second.handoff.tooltip, "requested by D>& · ran B, C");
 }
 
 fn transcript_context_row(
