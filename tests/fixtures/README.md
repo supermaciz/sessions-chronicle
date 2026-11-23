@@ -61,6 +61,7 @@ Fixtures added for Codex parsing coverage:
 - `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-02-00-empty-session.jsonl` (session_meta only)
 - `tests/fixtures/codex_sessions/2026/01/18/rollout-2026-01-18T02-03-00-malformed.jsonl` (event_msg first line, missing session_meta)
 - `tests/fixtures/codex_sessions/2026/05/19/rollout-2026-05-19T09-00-00-collab-resume.jsonl` (**synthetic** `collab_resume_end` coverage, derived from the upstream `CollabResumeEndEvent` struct — no real `collab_resume_*` event was found in captured rollouts)
+- `tests/fixtures/codex_sessions/2026/11/20/rollout-2026-11-20T10-00-00-turn-context-0169.jsonl` (**synthetic** 0.169+ `turn_context` with `permission_profile` and no `sandbox_policy`, two turns with different models; field names from upstream `TurnContextItem`, `permission_profile` value shape not captured)
 
 Subagent linkage fixtures live under `tests/fixtures/codex_subagent_linkage/`:
 

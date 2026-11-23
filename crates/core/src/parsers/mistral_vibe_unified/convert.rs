@@ -201,6 +201,9 @@ pub(crate) fn convert(
                     })?;
                 match role {
                     "user" => {
+                        if is_hook_skipped(entry) {
+                            continue;
+                        }
                         let (text, skill_payloads) = user_display_text(entry, content);
                         if text.trim().is_empty() {
                             continue;
@@ -290,7 +293,9 @@ pub(crate) fn convert(
                                 .and_then(|details| details.get("model")),
                         );
                     }
-                    "agent_change" | "compaction" => {}
+                    // A `resumed` checkpoint (3.1.4) marks a turn carried on
+                    // after a restart; the transcript is unchanged.
+                    "agent_change" | "compaction" | "resumed" => {}
                     "recovered" => {
                         let discarded = entry
                             .get("details")
@@ -497,6 +502,15 @@ impl Transcript {
             }
         }
     }
+}
+
+/// A user message whose turn a `pre_agent` hook skipped (Vibe >= 3.1.1) is
+/// settled as `outcome: {"type": "discarded", "cause": "skipped"}`. Other or
+/// missing user outcomes are not validated: user messages carried none before
+/// 3.1.1.
+fn is_hook_skipped(entry: &Value) -> bool {
+    entry.pointer("/outcome/type").and_then(Value::as_str) == Some("discarded")
+        && entry.pointer("/outcome/cause").and_then(Value::as_str) == Some("skipped")
 }
 
 /// A committed entry: provisional generations
@@ -1318,6 +1332,58 @@ mod tests {
             parse_fixture(&variant_rel("unknown-checkpoint", V_UNKNOWN_CHECKPOINT)),
             "Unsupported",
         );
+    }
+
+    /// Vibe 3.1.4 appends a `resumed` checkpoint when a restarted process
+    /// carries on a turn that a quit or crash cut; it leaves the transcript
+    /// unchanged.
+    #[test]
+    fn resumed_checkpoint_is_accepted() {
+        let parsed = convert_entries(vec![
+            user_message("u1", json!([{"type": "text", "text": "Question"}])),
+            json!({
+                "type": "checkpoint", "id": "checkpoint-resumed-1", "turnId": "t1",
+                "createdAt": T0_MS, "updatedAt": T0_MS, "generationStatus": "completed",
+                "kind": "resumed", "message": "Resumed after a restart", "details": {},
+            }),
+            json!({
+                "type": "message", "id": "a1", "turnId": "t1",
+                "createdAt": T0_MS, "updatedAt": T0_MS, "generationStatus": "completed",
+                "role": "assistant", "content": [ {"type": "text", "text": "Answer"} ],
+                "outcome": {"type": "committed"},
+            }),
+        ])
+        .unwrap();
+
+        let contents: Vec<&str> = parsed.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, ["Question", "Answer"]);
+    }
+
+    /// Since 3.1.1 a user message whose turn a `pre_agent` hook skipped is
+    /// settled as discarded with cause `skipped`; it is hidden.
+    #[test]
+    fn hook_skipped_user_message_is_hidden() {
+        let mut skipped = user_message("u1", json!([{"type": "text", "text": "Skipped"}]));
+        skipped["outcome"] = json!({"type": "discarded", "cause": "skipped"});
+        let mut other_outcome = user_message("u2", json!([{"type": "text", "text": "Kept"}]));
+        other_outcome["outcome"] = json!({"type": "something_new"});
+
+        let parsed = convert_entries(vec![skipped, other_outcome]).unwrap();
+
+        let contents: Vec<&str> = parsed.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, ["Kept"]);
+        assert_eq!(parsed.session.first_prompt.as_deref(), Some("Kept"));
+    }
+
+    #[test]
+    fn only_hook_skipped_user_messages_have_no_user_messages() {
+        let mut skipped = user_message("u1", json!([{"type": "text", "text": "Skipped"}]));
+        skipped["outcome"] = json!({"type": "discarded", "cause": "skipped"});
+
+        assert!(matches!(
+            convert_entries(vec![skipped]),
+            Err(UnifiedError::NoUserMessages)
+        ));
     }
 
     #[test]

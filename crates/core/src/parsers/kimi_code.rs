@@ -1187,6 +1187,29 @@ mod tests {
         );
     }
 
+    /// Kimi 2.7.0+ prompt prediction (opt-in) records its own model requests
+    /// and usage; neither belongs to the conversation.
+    #[test]
+    fn prediction_requests_and_usage_are_ignored() {
+        let parsed = parse_main(&in_open_m1_step(&[
+            r#"{"type":"llm.request","kind":"prediction","modelAlias":"predictor","turnStep":"0.1"}"#,
+            r#"{"type":"llm.request","kind":"prediction","modelAlias":"predictor"}"#,
+            r#"{"type":"context.append_loop_event","event":{"type":"content.part","stepUuid":"step-1","part":{"type":"text","text":"Answer"}}}"#,
+            r#"{"type":"usage.record","usageScope":"turn","usage":{"inputOther":100,"output":20}}"#,
+            r#"{"type":"usage.record","usageScope":"prediction","usage":{"inputOther":7,"output":3}}"#,
+        ]));
+
+        let assistant = parsed
+            .messages
+            .iter()
+            .find(|message| message.role == Role::Assistant)
+            .unwrap();
+        assert_eq!(assistant.model.as_deref(), Some("m-1"));
+        let usage = parsed.token_usage.unwrap();
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 20);
+    }
+
     #[test]
     fn tool_calls_take_their_step_model_and_survive_results() {
         let parsed = parse_main(&in_open_m1_step(&[
@@ -2758,6 +2781,14 @@ fn normalized_model(value: Option<&Value>) -> Option<String> {
     crate::parsers::model::normalize_model(Some(&Value::String(raw.to_string())))
 }
 
+/// A record written for prompt prediction: an `llm.request` with
+/// `kind: "prediction"` or a `usage.record` with `usageScope: "prediction"`.
+fn is_prediction_record(record: &Value) -> bool {
+    ["kind", "usageScope"]
+        .iter()
+        .any(|field| record.get(*field).and_then(Value::as_str) == Some("prediction"))
+}
+
 fn request_model(record: &Value) -> Option<String> {
     normalized_model(record.get("modelAlias")).or_else(|| normalized_model(record.get("model")))
 }
@@ -3352,6 +3383,9 @@ fn parse_journal(
             None => fallback_timestamp(path, start_time, line_number),
         };
         match value.get("type").and_then(Value::as_str) {
+            // Prompt prediction (2.7.0+, opt-in) is not part of the
+            // conversation: its requests and usage are left out.
+            Some("llm.request" | "usage.record") if is_prediction_record(&value) => {}
             Some("llm.request") => {
                 let Some(model) = request_model(&value) else {
                     continue;
