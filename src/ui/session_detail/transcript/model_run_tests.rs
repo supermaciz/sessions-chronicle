@@ -1,7 +1,7 @@
 use super::super::tests::{
     transcript_context_row, transcript_message_row, transcript_subagent_row, transcript_tool_row,
 };
-use super::model_attribution::model_run_markers;
+use super::model_attribution::{ModelRunMarker, ModelRunText, model_run_markers};
 use crate::database::TranscriptItemRow;
 use crate::models::{ContextKind, Role};
 
@@ -97,5 +97,32 @@ fn model_run_markers_use_attributed_delegation_to_disable_legacy_heuristic() {
             (2, Some("A".into()), None),
             (3, Some(" A ".into()), Some("A".into())),
         ],
+    );
+}
+
+#[test]
+fn model_run_presentation_prepares_caption_and_style_for_known_and_null_models() {
+    let known = ModelRunText::from(&ModelRunMarker {
+        model: Some("A<&".into()),
+        previous: None,
+    });
+    assert_eq!(known.caption, "A<&");
+    assert!(known.monospace);
+    assert!(known.previous_markup.is_none());
+    assert_eq!(known.description, "Model: A<&");
+
+    let unknown = ModelRunText::from(&ModelRunMarker {
+        model: None,
+        previous: Some("A<&".into()),
+    });
+    assert_eq!(unknown.caption, "model not recorded");
+    assert!(!unknown.monospace);
+    assert_eq!(
+        unknown.previous_markup.as_deref(),
+        Some("from <tt>A&lt;&amp;</tt>")
+    );
+    assert_eq!(
+        unknown.description,
+        "Model changed to model not recorded from A<&"
     );
 }

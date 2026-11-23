@@ -707,7 +707,7 @@ fn model_run_burst_promotes_first_marker_keeps_jump_and_recycles_hint() {
         .unwrap();
     assert!(hint.get_visible());
     assert_eq!(hint.text(), "→ model not recorded");
-    assert!(!hint.has_css_class("monospace"));
+    assert!(hint.has_css_class("monospace"));
     let tooltip = hint.tooltip_text().unwrap();
     assert!(tooltip.find('B').unwrap() < tooltip.find("model not recorded").unwrap());
     assert!(!revealer.reveals_child());

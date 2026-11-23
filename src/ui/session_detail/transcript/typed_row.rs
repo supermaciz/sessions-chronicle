@@ -180,11 +180,9 @@ impl TranscriptItemData {
             return;
         };
 
-        widgets.model_run.bind(
-            &widgets.root,
-            message.model_run.as_ref(),
-            message.model_run_text.as_ref(),
-        );
+        widgets
+            .model_run
+            .bind(&widgets.root, message.model_run_text.as_ref());
         Self::bind_message_header(widgets, message);
         self.bind_message_reasoning(widgets, message);
         self.render_message_body_and_bind_revision(widgets, message);
@@ -351,11 +349,9 @@ impl TranscriptItemData {
         };
 
         remove_transient_page_content(&widgets.root, &widgets.model_run);
-        widgets.model_run.bind(
-            &widgets.root,
-            tool_call.model_run.as_ref(),
-            tool_call.model_run_text.as_ref(),
-        );
+        widgets
+            .model_run
+            .bind(&widgets.root, tool_call.model_run_text.as_ref());
         let refs = build_tool_call_page_content(tool_call, self.highlight_query.as_deref());
 
         if let Some(reasoning_button) = refs.reasoning_button {
@@ -386,24 +382,15 @@ impl TranscriptItemData {
             return;
         };
 
-        widgets.model_run.bind(
-            &widgets.root,
-            burst.model_run.as_ref(),
-            burst.model_run_text.as_ref(),
-        );
+        widgets
+            .model_run
+            .bind(&widgets.root, burst.model_run_text.as_ref());
         widgets.clear_model_hint();
         rebuild_tool_burst_header(&widgets.header_wrap, burst);
         widgets.header_wrap.append(&widgets.model_hint);
-        if let Some((last_change, hint)) = burst
-            .later_changes
-            .last()
-            .zip(burst.collapsed_model_hint.as_ref())
-        {
+        if let Some(hint) = &burst.collapsed_model_hint {
             widgets.model_hint.set_label(&hint.caption);
             widgets.model_hint.set_tooltip_text(Some(&hint.tooltip));
-            if last_change.model.is_some() {
-                widgets.model_hint.add_css_class("monospace");
-            }
             widgets.model_hint_binding = Some(
                 self.expanded
                     .bind_property("value", &widgets.model_hint, "visible")
@@ -489,11 +476,9 @@ impl TranscriptItemData {
         };
 
         remove_transient_page_content(&widgets.root, &widgets.model_run);
-        widgets.model_run.bind(
-            &widgets.root,
-            subagent.model_run.as_ref(),
-            subagent.model_run_text.as_ref(),
-        );
+        widgets
+            .model_run
+            .bind(&widgets.root, subagent.model_run_text.as_ref());
         let refs = build_subagent_page_content(subagent);
 
         if let Some(reasoning_button) = refs.reasoning_button {
@@ -574,7 +559,6 @@ impl ToolBurstPageWidgets {
         self.model_hint.set_visible(false);
         self.model_hint.set_label("");
         self.model_hint.set_tooltip_text(None);
-        self.model_hint.remove_css_class("monospace");
     }
 }
 
@@ -867,6 +851,7 @@ fn build_tool_burst_page() -> ToolBurstPageWidgets {
     header_wrap.add_css_class("tool-call-group-header");
     let model_hint = gtk::Label::new(None);
     model_hint.add_css_class("caption");
+    model_hint.add_css_class("monospace");
     model_hint.add_css_class("dim-label");
     model_hint.set_ellipsize(gtk::pango::EllipsizeMode::End);
     model_hint.set_visible(false);

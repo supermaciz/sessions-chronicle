@@ -135,12 +135,8 @@ fn build_tool_call_widget(
     root.add_css_class("tool-call-row");
     root.set_margin_top(2);
     root.set_margin_bottom(2);
-    if init.model_run.is_some() {
-        ModelRunWidgets::prepend_to(&root).bind(
-            &root,
-            init.model_run.as_ref(),
-            init.model_run_text.as_ref(),
-        );
+    if let Some(text) = &init.model_run_text {
+        ModelRunWidgets::prepend_to(&root).bind(&root, Some(text));
     }
 
     let header = build_tool_call_row_header(ToolCallRowHeaderInit {

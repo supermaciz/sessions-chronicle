@@ -1,7 +1,7 @@
 use relm4::gtk;
 use relm4::gtk::prelude::*;
 
-use super::model_attribution::{ModelRunMarker, ModelRunText};
+use super::model_attribution::ModelRunText;
 
 pub(super) struct ModelRunWidgets {
     pub root: gtk::Box,
@@ -45,19 +45,14 @@ impl ModelRunWidgets {
         }
     }
 
-    pub fn bind(
-        &self,
-        row: &gtk::Box,
-        marker: Option<&ModelRunMarker>,
-        text: Option<&ModelRunText>,
-    ) {
-        let Some((marker, text)) = marker.zip(text) else {
+    pub fn bind(&self, row: &gtk::Box, text: Option<&ModelRunText>) {
+        let Some(text) = text else {
             self.clear(row);
             return;
         };
 
-        self.caption.set_label(marker.caption());
-        self.set_caption_monospace(marker.model.is_some());
+        self.caption.set_label(&text.caption);
+        self.set_caption_monospace(text.monospace);
         self.previous
             .set_markup(text.previous_markup.as_deref().unwrap_or_default());
         self.previous.set_visible(text.previous_markup.is_some());

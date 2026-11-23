@@ -13,14 +13,16 @@ pub struct ModelRunMarker {
 }
 
 impl ModelRunMarker {
-    pub fn caption(&self) -> &str {
+    fn caption(&self) -> &str {
         self.model.as_deref().unwrap_or(MODEL_NOT_RECORDED)
     }
 }
 
-/// Display strings prepared before a row is bound.
+/// Display text and style prepared before a row is bound.
 #[derive(Clone, Debug)]
 pub struct ModelRunText {
+    pub caption: String,
+    pub monospace: bool,
     pub previous_markup: Option<String>,
     pub description: String,
 }
@@ -29,6 +31,8 @@ impl From<&ModelRunMarker> for ModelRunText {
     fn from(marker: &ModelRunMarker) -> Self {
         let caption = marker.caption();
         Self {
+            caption: caption.to_string(),
+            monospace: marker.model.is_some(),
             previous_markup: marker
                 .previous
                 .as_deref()

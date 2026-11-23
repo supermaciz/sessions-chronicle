@@ -124,6 +124,25 @@ impl TranscriptItemInit {
             Self::Context(init) => init.item_index,
         }
     }
+
+    /// Resolve presentation after any first-child marker has been promoted.
+    fn with_prepared_model_run(mut self) -> Self {
+        let (marker, text) = match &mut self {
+            Self::Message(init) => (&init.model_run, &mut init.model_run_text),
+            Self::ToolCall(init) => (&init.model_run, &mut init.model_run_text),
+            Self::Subagent(init) => (&init.model_run, &mut init.model_run_text),
+            Self::ToolBurst(init) => {
+                init.collapsed_model_hint = CollapsedModelHint::from_changes(&init.later_changes);
+                for child in &mut init.tool_calls {
+                    child.model_run_text = child.model_run.as_ref().map(ModelRunText::from);
+                }
+                (&init.model_run, &mut init.model_run_text)
+            }
+            Self::Context(_) => return self,
+        };
+        *text = marker.as_ref().map(ModelRunText::from);
+        self
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -160,16 +179,14 @@ pub fn build_tool_burst_init(
     let mut child_match_counts = Vec::new();
     let mut visible_reasoning_child_count = 0usize;
     let mut encrypted_only_child_count = 0usize;
-    let (model_run, model_run_text) = tool_calls
+    let model_run = tool_calls
         .first_mut()
-        .map(|first| (first.model_run.take(), first.model_run_text.take()))
-        .unwrap_or_default();
+        .and_then(|first| first.model_run.take());
     let later_changes: Vec<_> = tool_calls
         .iter()
         .skip(1)
         .filter_map(|tool_call| tool_call.model_run.clone())
         .collect();
-    let collapsed_model_hint = CollapsedModelHint::from_changes(&later_changes);
 
     for tool_call in &tool_calls {
         *category_counts
@@ -202,9 +219,9 @@ pub fn build_tool_burst_init(
         encrypted_only_child_count,
         default_expanded,
         model_run,
-        model_run_text,
+        model_run_text: None,
         later_changes,
-        collapsed_model_hint,
+        collapsed_model_hint: None,
     }
 }
 
@@ -237,7 +254,6 @@ fn transcript_item_init_from_row_with_index(
 ) -> TranscriptItemInit {
     use crate::models::{ToolCallStatus, TranscriptItemKind};
 
-    let model_run_text = model_run.as_ref().map(ModelRunText::from);
     match row.kind {
         TranscriptItemKind::Message => {
             let role = row.role.unwrap_or(Role::User);
@@ -264,7 +280,7 @@ fn transcript_item_init_from_row_with_index(
                 highlight_query,
                 db_path,
                 model_run,
-                model_run_text,
+                model_run_text: None,
             })
         }
         TranscriptItemKind::ToolCall => TranscriptItemInit::ToolCall(ToolCallItemInit {
@@ -288,7 +304,7 @@ fn transcript_item_init_from_row_with_index(
             highlight_query,
             reasoning_preview: row.reasoning_preview,
             model_run,
-            model_run_text,
+            model_run_text: None,
         }),
         TranscriptItemKind::Subagent => TranscriptItemInit::Subagent(SubagentItemInit {
             item_index,
@@ -306,7 +322,7 @@ fn transcript_item_init_from_row_with_index(
                 children,
             ),
             model_run,
-            model_run_text,
+            model_run_text: None,
         }),
         TranscriptItemKind::Context => match row.context.clone() {
             Some(preview) => TranscriptItemInit::Context(ContextItemInit {
@@ -413,6 +429,7 @@ pub fn transcript_item_init_from_display_item(
             TranscriptItemInit::ToolBurst(build_tool_burst_init(display_index, tool_calls, false))
         }
     }
+    .with_prepared_model_run()
 }
 
 #[cfg(test)]
