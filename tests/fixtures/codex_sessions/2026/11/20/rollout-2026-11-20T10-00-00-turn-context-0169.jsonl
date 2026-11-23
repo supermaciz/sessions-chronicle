@@ -1,0 +1,7 @@
+{"timestamp":"2026-11-20T10:00:00.000Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000169","timestamp":"2026-11-20T10:00:00.000Z","cwd":"/tmp/codex-0169-fixture","originator":"codex_cli_rs","cli_version":"0.171.0"}}
+{"timestamp":"2026-11-20T10:00:01.000Z","type":"turn_context","payload":{"cwd":"/tmp/codex-0169-fixture","approval_policy":"on-request","permission_profile":{"name":"workspace-write"},"active_permission_profile":"workspace-write","direct_only_tool_namespaces":[],"model":"gpt-5.5-codex","summary":"auto"}}
+{"timestamp":"2026-11-20T10:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"List the crates"}}
+{"timestamp":"2026-11-20T10:00:03.000Z","type":"event_msg","payload":{"type":"agent_message","message":"There are three crates."}}
+{"timestamp":"2026-11-20T10:00:04.000Z","type":"turn_context","payload":{"cwd":"/tmp/codex-0169-fixture","approval_policy":"on-request","permission_profile":{"name":"read-only"},"model":"gpt-5.5-codex-mini","summary":"auto"}}
+{"timestamp":"2026-11-20T10:00:05.000Z","type":"event_msg","payload":{"type":"user_message","message":"And the binaries?"}}
+{"timestamp":"2026-11-20T10:00:06.000Z","type":"event_msg","payload":{"type":"agent_message","message":"Two binaries."}}

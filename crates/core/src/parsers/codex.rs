@@ -1453,6 +1453,34 @@ mod tests {
         assert_eq!(assistant_msgs[0].model.as_deref(), Some("o3-mini"));
     }
 
+    /// Codex 0.169+ `turn_context`: `permission_profile` replaces
+    /// `sandbox_policy`; the model still comes from `payload.model`, per turn.
+    #[test]
+    fn turn_context_0169_shape_attributes_models_per_turn() {
+        let parsed = CodexParser
+            .parse(std::path::Path::new(&crate::fixture_path(
+                "codex_sessions/2026/11/20/rollout-2026-11-20T10-00-00-turn-context-0169.jsonl",
+            )))
+            .unwrap();
+        let assistants: Vec<_> = parsed
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .map(|m| (m.content.as_str(), m.model.as_deref()))
+            .collect();
+        assert_eq!(
+            assistants,
+            [
+                ("There are three crates.", Some("gpt-5.5-codex")),
+                ("Two binaries.", Some("gpt-5.5-codex-mini")),
+            ]
+        );
+        assert_eq!(
+            parsed.session.first_prompt.as_deref(),
+            Some("List the crates")
+        );
+    }
+
     #[test]
     fn user_message_has_no_model_codex() {
         let parsed = CodexParser

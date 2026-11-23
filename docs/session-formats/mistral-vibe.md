@@ -98,7 +98,8 @@ dropped), and a user message whose turn a hook skipped is settled with
 User messages previously carried no `outcome`. The reader only checks
 `outcome` on assistant and reasoning entries, so this does not break parsing,
 but a skipped prompt is shown as a normal user message (likely, not
-reproduced). The legacy `SessionMetadata` gains an optional `worktrees` list.
+reproduced). *Resolved (reader version 6): a user message settled as
+`discarded` / `skipped` is hidden.* The legacy `SessionMetadata` gains an optional `worktrees` list.
 
 **Format watch 2026-11-23 — new checkpoint kind breaks the reader:** `main` /
 tag [v3.1.4](https://github.com/mistralai/mistral-vibe/releases/tag/v3.1.4) (`e76235b2`,
@@ -116,7 +117,8 @@ The reader treats checkpoint `kind` as a closed variant
 (`model_change`, `agent_change`, `compaction`, `recovered`), so such a session
 fails with `UnifiedError::Unsupported("checkpoint kind \"resumed\"")` and is
 not indexed (confirmed against the reader on `main` with an entry built from
-the upstream shape). Other 3.1.3/3.1.4 changes are additive for the reader:
+the upstream shape). *Resolved (reader version 6): `resumed` is accepted and
+leaves the transcript unchanged.* Other 3.1.3/3.1.4 changes are additive for the reader:
 effect entries gain `toolCallId`; a turn whose model call a `pre_llm_call`
 hook skipped keeps its user message; model inputs are no longer stored in
 journalled transitions or completion intents; the store gains Session API
@@ -350,7 +352,9 @@ an old successful signature silently skipping the affected store. Do not bump
 it for behavior-preserving refactors, optimizations, documentation, or test-only
 changes. Add or update a regression proving that an old reader-version
 signature is no longer current. Version **2** invalidates signatures predating
-the journal-digest, state-union, and identity-validation fixes.
+the journal-digest, state-union, and identity-validation fixes. Version
+**6** re-reads stores rejected for the 3.1.4 `resumed` checkpoint and hides
+user messages a hook skipped.
 
 A stored version unequal to the current constant makes `is_current()` return
 `false`. The next incremental pass retries those Unified stores through the
@@ -365,7 +369,7 @@ Keep these version domains separate:
 | Version | Purpose |
 |---|---|
 | Vibe `store_format` / `store_format_minor` (reader accepts 9 and 10; 8 and 11+ rejected) | Which upstream on-disk format the reader accepts. |
-| `UNIFIED_READER_VERSION` (currently 5) | Whether a prior successful Unified read may still be skipped. |
+| `UNIFIED_READER_VERSION` (currently 6) | Whether a prior successful Unified read may still be skipped. |
 | SQLite schema version | Structure of Sessions Chronicle's index database; changing reader semantics alone does not require a schema migration. |
 
 ---

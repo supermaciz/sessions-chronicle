@@ -26,11 +26,13 @@ use super::store::FileSample;
 /// state-union, and identity-validation fixes. Version 3 backfills tool-call and
 /// subagent model attribution. Version 4 re-reads Vibe >= 3.1.0 subagent
 /// children (previously rejected because their IDs hash an admission sequence)
-/// and records every child's spawn key for the indexer's link check. Keep the
+/// and records every child's spawn key for the indexer's link check.
 /// Version 5 rebuilds child links to clear stale ownership evidence after
-/// metadata changes. Keep the maintenance policy in
+/// metadata changes. Version 6 re-reads stores rejected for the Vibe 3.1.4
+/// `resumed` checkpoint and hides user messages a hook skipped (3.1.1+).
+/// Keep the maintenance policy in
 /// `docs/session-formats/mistral-vibe.md` aligned with this contract.
-pub const UNIFIED_READER_VERSION: u32 = 5;
+pub const UNIFIED_READER_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UnifiedSignature {

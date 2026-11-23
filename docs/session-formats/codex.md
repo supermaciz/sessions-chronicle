@@ -69,8 +69,8 @@ older lines are normalized into it on read
 `FunctionCallOutputContentItem::InputAudio` follows the 0.167.0 `ContentItem`
 change (`audio_url` or `file_id`). The parser only reads
 `turn_context.payload.model`, so none of this affects parsing; the
-`turn_context` example below still shows the pre-0.169.0 `sandbox_policy`
-shape. Unreleased on `main`: response item `id`s go through a typed
+`turn_context` examples below show both shapes, and
+`rollout-2026-11-20T10-00-00-turn-context-0169.jsonl` covers the new one. Unreleased on `main`: response item `id`s go through a typed
 `OptionalWireItemId` serializer (wire shape not yet verified).
 
 **Format watch 2026-11-23: stable `rust-v0.171.0`**
@@ -640,6 +640,24 @@ still excludes MCP begin events and persists MCP end events only in legacy mode.
     "approval_policy": "on-request",
     "sandbox_policy": { "type": "workspace-write" },
     "model": "gpt-5.1-codex",
+    "summary": "auto"
+  }
+}
+```
+
+From 0.169.0, `sandbox_policy` and `file_system_sandbox_policy` are no longer
+written and `permission_profile` is required (value shape not captured
+locally); the parser still only reads `model`:
+
+```json
+{
+  "timestamp": "2026-11-20T10:00:01.000Z",
+  "type": "turn_context",
+  "payload": {
+    "cwd": "/home/user/project",
+    "approval_policy": "on-request",
+    "permission_profile": { "...": "..." },
+    "model": "gpt-5.5-codex",
     "summary": "auto"
   }
 }

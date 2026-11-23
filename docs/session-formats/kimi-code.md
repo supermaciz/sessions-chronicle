@@ -94,6 +94,9 @@ as `usage.record` with `usageScope: "prediction"`
 (`packages/agent-core-v2/src/session/usage/usageAgentModel.ts`), which the
 parser adds to token totals. Whether a `llm.request` with
 `kind: "prediction"` is written to the session journal is not confirmed.
+*Resolved: the parser now ignores `usage.record` with
+`usageScope: "prediction"` and `llm.request` with `kind: "prediction"`, so
+prediction requests no longer change step models or token totals.*
 
 ---
 
