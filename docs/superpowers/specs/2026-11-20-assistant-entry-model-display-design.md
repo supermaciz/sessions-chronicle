@@ -60,6 +60,9 @@ What the user asked for:
 
 ## Current state (verified 2026-11-20)
 
+Re-checked on 2026-11-23 after #229 and #230: those commits change parsers,
+fixtures, and format docs only. Nothing listed below has moved.
+
 - `crates/core/src/database/mod.rs::load_transcript_items` selects `m.model`
   under the alias `model`. It does not select `tc.model`, `sa.source_model`, or
   `sa.child_session_id`. Columns are resolved by name, so the new columns need
@@ -350,6 +353,12 @@ Unit and integration tests (headless, as in AGENTS.md):
   session switches model mid-session with tool-call-only stretches, and one
   parent links an indexed tool-call-only child. Then check by hand with
   `--sessions-dir tests/fixtures`.
+  `codex_sessions/2026/11/20/rollout-2026-11-20T10-00-00-turn-context-0169.jsonl`
+  (added in #230) already switches model between two assistant messages
+  (`gpt-5.5-codex` → `gpt-5.5-codex-mini`) but has no tool call. It can be
+  extended with tool calls rather than starting from scratch. Adding a Codex
+  fixture changes the session count asserted in
+  `crates/core/src/database/indexer.rs` (currently 6).
 
 Definition of done: `cargo fmt --all -- --check`, `cargo clippy --all -- -D
 warnings`, the headless test suite, and screenshots of the MODELS section, a
