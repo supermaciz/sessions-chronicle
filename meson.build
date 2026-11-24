@@ -1,7 +1,7 @@
 project(
   'sessions-chronicle',
   'rust',
-  version: '0.11.3',
+  version: '0.12.0',
   meson_version: '>= 0.59',
   license: 'MIT',
 )

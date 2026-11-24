@@ -49,6 +49,17 @@
   </categories>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.12.0" date="2026-11-24">
+      <description>
+        <p>Adds model attribution to the session view and improves support for evolving AI assistant formats.</p>
+        <ul>
+          <li>Show each session's models in the summary and mark model changes in transcripts, including subagent handoffs</li>
+          <li>Restore missing OpenCode V2 assistant content with a one-time reindex</li>
+          <li>Index Mistral Vibe 3.1.4 resumed sessions and ignore Kimi Code 2.7 prompt-prediction records</li>
+          <li>Render transcript timestamps in local time and support the Codex 0.169 turn_context format</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.11.3" date="2026-11-10">
       <description>
         <p>Improves Mistral Vibe compatibility and adds model attribution for tool calls and subagents.</p>
